@@ -232,6 +232,8 @@ public class MainActivity extends Activity {
                 intent.putExtra(PlayerActivity.EXTRA_AUDIO_LANG, o.optString("audioLang", ""));
                 intent.putExtra(PlayerActivity.EXTRA_SUB_LANG, o.optString("subLang", "off"));
                 intent.putExtra(PlayerActivity.EXTRA_RESIZE, o.optString("resize", "fit"));
+                JSONArray alts = o.optJSONArray("alts");
+                if (alts != null) intent.putExtra(PlayerActivity.EXTRA_ALTS, alts.toString());
                 runOnUiThread(() -> startActivity(intent));
             } catch (JSONException ignored) {
                 // Charge utile invalide : rien à lire.

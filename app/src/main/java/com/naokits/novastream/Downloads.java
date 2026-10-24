@@ -73,7 +73,8 @@ final class Downloads {
                             .put("done", c.getLong(c.getColumnIndexOrThrow(DownloadManager.COLUMN_BYTES_DOWNLOADED_SO_FAR)))
                             .put("total", c.getLong(c.getColumnIndexOrThrow(DownloadManager.COLUMN_TOTAL_SIZE_BYTES)))
                             .put("file", local == null ? "" : local)
-                            .put("reason", reasonText(st, reason));
+                            .put("reason", reasonText(st, reason))
+                            .put("code", st == DownloadManager.STATUS_FAILED ? reason : 0);
                     found.put(String.valueOf(id), d);
                 }
             }

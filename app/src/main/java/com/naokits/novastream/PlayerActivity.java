@@ -61,6 +61,7 @@ public class PlayerActivity extends Activity {
     static final String EXTRA_AUDIO_LANG = "audioLang";
     static final String EXTRA_SUB_LANG = "subLang";
     static final String EXTRA_RESIZE = "resize";
+    static final String EXTRA_ALTS = "alts";
 
     private static final String[] RESIZE_KEYS = {"fit", "zoom", "fill"};
     private static final String[] RESIZE_LABELS = {"Adapté à l'écran", "Plein écran (zoom)", "Étiré"};
@@ -75,6 +76,9 @@ public class PlayerActivity extends Activity {
     private DefaultHttpDataSource.Factory http;
     private int uaIndex;
     private int uaTries;
+    private String[] primaryUrls;
+    private String[][] alts;
+    private int[] altUsed;
     private LinearLayout errorPanel;
     private TextView errorText;
     private String[] urls;
@@ -99,6 +103,9 @@ public class PlayerActivity extends Activity {
             return;
         }
         if (titles == null || titles.length != urls.length) titles = new String[urls.length];
+        primaryUrls = urls.clone();
+        alts = parseAlts(intent.getStringExtra(EXTRA_ALTS), urls.length);
+        altUsed = new int[urls.length];
         int index = Math.max(0, Math.min(intent.getIntExtra(EXTRA_INDEX, 0), urls.length - 1));
 
         FrameLayout root = new FrameLayout(this);
@@ -178,13 +185,7 @@ public class PlayerActivity extends Activity {
                 .build());
 
         List<MediaItem> items = new ArrayList<>();
-        for (int i = 0; i < urls.length; i++) {
-            items.add(new MediaItem.Builder()
-                    .setUri(urls[i])
-                    .setMediaId(String.valueOf(i))
-                    .setMediaMetadata(new MediaMetadata.Builder().setTitle(titleAt(i)).build())
-                    .build());
-        }
+        for (int i = 0; i < urls.length; i++) items.add(mediaItem(i));
         player.addListener(new Player.Listener() {
             @Override
             public void onMediaItemTransition(MediaItem mediaItem, int reason) {
@@ -201,10 +202,23 @@ public class PlayerActivity extends Activity {
                 }
                 // Accès refusé : le serveur n'accepte peut-être pas cet identifiant de lecteur, on essaie le suivant.
                 int code = httpCode(error);
-                if ((code == 401 || code == 403 || code == 406) && uaTries < UserAgents.ALL.length - 1) {
+                boolean refused = code == 401 || code == 403 || code == 406;
+                if (refused && uaTries < UserAgents.ALL.length - 1) {
                     uaTries++;
                     uaIndex = (uaIndex + 1) % UserAgents.ALL.length;
                     http.setUserAgent(UserAgents.ALL[uaIndex]);
+                    player.prepare();
+                    player.play();
+                    return;
+                }
+                // Puis les adresses de secours (chemin /movie/, autre conteneur, source directe).
+                int i = player.getCurrentMediaItemIndex();
+                if ((refused || code == 404) && i < alts.length && altUsed[i] < alts[i].length) {
+                    urls[i] = alts[i][altUsed[i]++];
+                    uaTries = UserAgents.ALL.length;
+                    uaIndex = UserAgents.index(PlayerActivity.this);
+                    http.setUserAgent(UserAgents.ALL[uaIndex]);
+                    player.replaceMediaItem(i, mediaItem(i));
                     player.prepare();
                     player.play();
                     return;
@@ -224,6 +238,32 @@ public class PlayerActivity extends Activity {
         player.prepare();
         player.play();
         showBanner();
+    }
+
+    private MediaItem mediaItem(int i) {
+        return new MediaItem.Builder()
+                .setUri(urls[i])
+                .setMediaId(String.valueOf(i))
+                .setMediaMetadata(new MediaMetadata.Builder().setTitle(titleAt(i)).build())
+                .build();
+    }
+
+    private static String[][] parseAlts(String json, int count) {
+        String[][] out = new String[count][];
+        for (int i = 0; i < count; i++) out[i] = new String[0];
+        if (json == null) return out;
+        try {
+            org.json.JSONArray all = new org.json.JSONArray(json);
+            for (int i = 0; i < count && i < all.length(); i++) {
+                org.json.JSONArray a = all.optJSONArray(i);
+                if (a == null) continue;
+                out[i] = new String[a.length()];
+                for (int j = 0; j < a.length(); j++) out[i][j] = a.optString(j, "");
+            }
+        } catch (org.json.JSONException ignored) {
+            // Pas d'adresses de secours.
+        }
+        return out;
     }
 
     private String titleAt(int i) {
@@ -419,6 +459,7 @@ public class PlayerActivity extends Activity {
         Button close = button("Fermer", v -> finish());
         buttons.addView(retry);
         buttons.addView(external);
+        if (!live) buttons.addView(button("Diagnostic", v -> runDiagnostic()));
         if (live && urls.length > 1) buttons.addView(button("Chaîne suivante", v -> { hideError(); zap(1); }));
         buttons.addView(close);
         errorPanel.addView(buttons);
@@ -495,6 +536,79 @@ public class PlayerActivity extends Activity {
         } catch (ActivityNotFoundException e) {
             Toast.makeText(this, "Aucun autre lecteur installé. Installez VLC depuis le magasin d'applis.", Toast.LENGTH_LONG).show();
         }
+    }
+
+    // ---------------------------------------------------------------- Diagnostic
+
+    /**
+     * Interroge le serveur avec chaque adresse et plusieurs identifiants de lecteur, et affiche ses réponses
+     * exactes (code HTTP, redirection, message) pour comprendre un refus. Identifiants masqués.
+     */
+    private void runDiagnostic() {
+        int i = player.getCurrentMediaItemIndex();
+        List<String> candidates = new ArrayList<>();
+        candidates.add(primaryUrls[i]);
+        if (i < alts.length) for (String a : alts[i]) if (!candidates.contains(a)) candidates.add(a);
+        errorText.setText("Diagnostic en cours…");
+        new Thread(() -> {
+            StringBuilder out = new StringBuilder();
+            for (int c = 0; c < candidates.size(); c++) {
+                String url = candidates.get(c);
+                String[] agents = c == 0 ? new String[]{UserAgents.ALL[0], UserAgents.ALL[1], null} : new String[]{UserAgents.ALL[0]};
+                for (String ua : agents) {
+                    out.append(shortUrl(url)).append("  [").append(ua == null ? "sans identifiant" : ua.split("[ /]")[0])
+                            .append("] → ").append(probe(url, ua)).append('\n');
+                }
+            }
+            runOnUiThread(() -> errorText.setText(out.toString().trim()));
+        }).start();
+    }
+
+    private String probe(String address, String ua) {
+        try {
+            StringBuilder hops = new StringBuilder();
+            for (int hop = 0; hop < 5; hop++) {
+                java.net.HttpURLConnection c = (java.net.HttpURLConnection) new java.net.URL(address).openConnection();
+                c.setConnectTimeout(8000);
+                c.setReadTimeout(8000);
+                c.setInstanceFollowRedirects(false);
+                if (ua != null) c.setRequestProperty("User-Agent", ua);
+                c.setRequestProperty("Range", "bytes=0-1");
+                int code = c.getResponseCode();
+                String location = c.getHeaderField("Location");
+                if (code >= 300 && code < 400 && location != null) {
+                    address = new java.net.URL(new java.net.URL(address), location).toString();
+                    hops.append(code).append(" vers ").append(Uri.parse(address).getHost()).append(", ");
+                    c.disconnect();
+                    continue;
+                }
+                String body = "";
+                if (code >= 400) {
+                    java.io.InputStream in = c.getErrorStream();
+                    if (in != null) {
+                        byte[] buf = new byte[300];
+                        int n = in.read(buf);
+                        if (n > 0) body = new String(buf, 0, n, "UTF-8").replaceAll("<[^>]*>", " ").replaceAll("\\s+", " ").trim();
+                        in.close();
+                    }
+                }
+                c.disconnect();
+                String result = hops + "HTTP " + code + (code == 200 || code == 206 ? " OK" : "");
+                if (!body.isEmpty()) result += " « " + (body.length() > 90 ? body.substring(0, 90) + "…" : body) + " »";
+                return result;
+            }
+            return hops + "trop de redirections";
+        } catch (java.io.IOException e) {
+            return "erreur réseau (" + e.getClass().getSimpleName() + ")";
+        }
+    }
+
+    /** « /series/…/12345.mkv » sans l'hôte ni les identifiants. */
+    private static String shortUrl(String url) {
+        Uri u = Uri.parse(url);
+        List<String> seg = u.getPathSegments();
+        if (seg.size() >= 4) return "/" + seg.get(0) + "/…/" + seg.get(seg.size() - 1);
+        return u.getHost() == null ? "?" : u.getHost();
     }
 
     // ---------------------------------------------------------------- Cycle de vie

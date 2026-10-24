@@ -356,6 +356,7 @@
         var s = parseInt(e.season, 10) || parseInt(key, 10) || 1;
         (seasons[s] = seasons[s] || []).push({
           id: str(e.id), num: parseInt(e.episode_num, 10) || 0, title: str(e.title), ext: str(e.container_extension) || "mp4",
+          direct: /^https?:/.test(str(e.direct_source)) ? str(e.direct_source) : "",
           duration: str(info.duration), plot: str(info.plot), image: str(info.movie_image)
         });
       });
@@ -509,17 +510,31 @@
       urls: channels.map(liveUrl), subtitle: "En direct" });
   }
 
+  // Adresses de secours si le serveur refuse l'adresse habituelle (HTTP 403/404) : certains serveurs ne
+  // servent les épisodes que par le chemin /movie/, ou dans un autre conteneur, ou via leur « source directe ».
+  function altUrls(kind, it) {
+    if (S.demo) return [];
+    var other = it.ext === "mp4" ? "mkv" : "mp4";
+    var list = kind === "series"
+      ? [Xtream.streamUrl("movie", it.id, it.ext), Xtream.streamUrl("series", it.id, other), Xtream.streamUrl("movie", it.id, other)]
+      : [Xtream.streamUrl("movie", it.id, other)];
+    if (it.direct) list.push(it.direct);
+    return list;
+  }
+
   function playMovie(item) {
+    var local = DL.localFile("movie-" + item.id);
     play({ live: false, kind: "movie", index: 0, titles: [item.name], subtitle: item.year || "",
-      urls: [DL.localFile("movie-" + item.id) || (S.demo ? DEMO_URL : Xtream.streamUrl("movie", item.id, item.ext))] });
+      urls: [local || (S.demo ? DEMO_URL : Xtream.streamUrl("movie", item.id, item.ext))],
+      alts: [local ? [] : altUrls("movie", item)] });
   }
 
   function playEpisodes(show, season, episodes, index) {
+    var locals = episodes.map(function (e) { return DL.localFile("ep-" + e.id); });
     play({ live: false, kind: "series", index: index, subtitle: show.name,
       titles: episodes.map(function (e) { return "S" + season + " É" + e.num + " · " + (e.title || "Épisode " + e.num); }),
-      urls: episodes.map(function (e) {
-        return DL.localFile("ep-" + e.id) || (S.demo ? DEMO_URL : Xtream.streamUrl("series", e.id, e.ext));
-      }) });
+      urls: episodes.map(function (e, i) { return locals[i] || (S.demo ? DEMO_URL : Xtream.streamUrl("series", e.id, e.ext)); }),
+      alts: episodes.map(function (e, i) { return locals[i] ? [] : altUrls("series", e); }) });
   }
 
   // ---------------------------------------------------------------- Téléchargements
@@ -587,6 +602,20 @@
     // Lance le plus ancien téléchargement en attente quand aucun n'est en cours.
     pump: function () {
       DL.refresh();
+      // Refusé par le serveur : on retente automatiquement avec l'adresse de secours suivante.
+      DL.list.forEach(function (d) {
+        var st = d.id && DL.status[d.id];
+        if (!st || st.status !== "failed" || [401, 403, 404, 406].indexOf(st.code) === -1) return;
+        var alts = d.alts || [];
+        d.alt = d.alt || 0;
+        if (d.alt >= alts.length) return;
+        if (window.Android) window.Android.removeDownload(d.id);
+        delete DL.status[d.id];
+        d.url = alts[d.alt++];
+        var m = d.url.match(/\.([A-Za-z0-9]+)(\?|$)/);
+        if (m) d.ext = m[1];
+        d.id = null;
+      });
       var busy = DL.list.some(function (d) { return d.id && ACTIVE[DL.state(d).status]; });
       if (busy) return;
       var next = DL.list.slice().sort(function (a, b) { return (a.added - b.added) || ((a.order || 0) - (b.order || 0)); })
@@ -661,13 +690,15 @@
 
   function movieDownload(item) {
     return { key: "movie-" + item.id, kind: "movie", title: item.name, subtitle: item.year || "Film", image: item.image,
-      url: S.demo ? DEMO_FILE : Xtream.streamUrl("movie", item.id, item.ext), ext: S.demo ? "mp4" : (item.ext || "mp4") };
+      url: S.demo ? DEMO_FILE : Xtream.streamUrl("movie", item.id, item.ext), ext: S.demo ? "mp4" : (item.ext || "mp4"),
+      alts: altUrls("movie", item) };
   }
 
   function episodeDownload(show, season, e) {
     return { key: "ep-" + e.id, kind: "episode", title: show.name + " · S" + season + " É" + e.num,
       subtitle: e.title || "Épisode " + e.num, image: e.image || show.image,
-      url: S.demo ? DEMO_FILE : Xtream.streamUrl("series", e.id, e.ext), ext: S.demo ? "mp4" : (e.ext || "mp4") };
+      url: S.demo ? DEMO_FILE : Xtream.streamUrl("series", e.id, e.ext), ext: S.demo ? "mp4" : (e.ext || "mp4"),
+      alts: altUrls("series", e) };
   }
 
   // Bouton « Télécharger » d'une fiche film : affiche la progression puis « Téléchargé ».
@@ -1239,6 +1270,7 @@
         var i = (data && data.info) || {};
         var md = (data && data.movie_data) || {};
         if (str(md.container_extension)) item = Object.assign({}, item, { ext: str(md.container_extension) });
+        if (/^https?:/.test(str(md.direct_source))) item = Object.assign({}, item, { direct: str(md.direct_source) });
         return detailTop(item, {
           backdrop: firstString(i.backdrop_path), poster: str(i.movie_image || i.cover_big) || item.image,
           genre: str(i.genre), year: str(i.releasedate || i.release_date).slice(0, 4) || item.year,
@@ -1351,7 +1383,8 @@
             play({ live: false, kind: d.kind === "episode" ? "series" : "movie", index: 0, titles: [d.title],
               subtitle: d.subtitle || "", urls: [st.file] });
           } else if (st.status === "failed" || st.status === "missing") {
-            var entry = { key: d.key, kind: d.kind, title: d.title, subtitle: d.subtitle, image: d.image, url: d.url, ext: d.ext };
+            var entry = { key: d.key, kind: d.kind, title: d.title, subtitle: d.subtitle, image: d.image, url: d.url, ext: d.ext,
+              alts: d.alts || [] };
             DL.add(entry);
             d = DL.find(entry.key);
             toast("Nouvel essai : " + d.title);
