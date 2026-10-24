@@ -7,6 +7,10 @@ import android.content.Intent;
 import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
 import android.content.res.Configuration;
+import android.net.Uri;
+import android.view.ViewGroup;
+import android.webkit.RenderProcessGoneDetail;
+import android.webkit.WebResourceResponse;
 import android.os.Bundle;
 import android.view.KeyEvent;
 import android.webkit.JavascriptInterface;
@@ -20,14 +24,15 @@ import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
 
-import java.io.ByteArrayOutputStream;
+import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.HttpURLConnection;
 import java.net.SocketTimeoutException;
 import java.net.URL;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
+import java.nio.charset.StandardCharsets;
+import java.util.HashMap;
+import java.util.Map;
 
 /**
  * Écran principal : l'interface NovaStream (HTML/JS dans assets/web) affichée dans une WebView.
@@ -37,8 +42,11 @@ public class MainActivity extends Activity {
 
     static final String USER_AGENT = "NovaStream-TV/1.0 (Linux; Android) ExoPlayer";
 
+    /** Adresse interne : l'interface et le relais vers le serveur IPTV sont servis par l'appli elle-même. */
+    static final String HOST = "appassets.androidplatform.net";
+    static final String START_URL = "https://" + HOST + "/web/index.html";
+
     private WebView web;
-    private final ExecutorService network = Executors.newFixedThreadPool(4);
 
     @SuppressLint({"SetJavaScriptEnabled", "AddJavascriptInterface"})
     @Override
@@ -62,13 +70,36 @@ public class MainActivity extends Activity {
         web.setWebViewClient(new WebViewClient() {
             @Override
             public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
-                // L'interface ne quitte jamais ses propres fichiers.
-                return !request.getUrl().toString().startsWith("file:///android_asset/");
+                // L'interface ne quitte jamais ses propres pages.
+                return !HOST.equals(request.getUrl().getHost());
+            }
+
+            @Override
+            public WebResourceResponse shouldInterceptRequest(WebView view, WebResourceRequest request) {
+                Uri url = request.getUrl();
+                if (!HOST.equals(url.getHost())) return null;
+                String path = url.getPath() == null ? "" : url.getPath();
+                if (path.equals("/api")) {
+                    return proxy(url.getQueryParameter("u"), "1".equals(url.getQueryParameter("compact")));
+                }
+                if (path.startsWith("/web/")) return asset(path.substring(1));
+                return error(404, "Introuvable");
+            }
+
+            @Override
+            public boolean onRenderProcessGone(WebView view, RenderProcessGoneDetail detail) {
+                // Si l'affichage manque de mémoire, on le relance au lieu de fermer l'appli.
+                ViewGroup parent = (ViewGroup) view.getParent();
+                if (parent != null) parent.removeView(view);
+                view.destroy();
+                web = null;
+                recreate();
+                return true;
             }
         });
 
         setContentView(web);
-        web.loadUrl("file:///android_asset/web/index.html");
+        web.loadUrl(START_URL);
         web.requestFocus();
     }
 
@@ -84,7 +115,7 @@ public class MainActivity extends Activity {
     @Override
     public boolean dispatchKeyEvent(KeyEvent event) {
         // La touche Retour est confiée à l'interface ; si elle n'a rien à fermer, on quitte l'appli.
-        if (event.getKeyCode() == KeyEvent.KEYCODE_BACK) {
+        if (event.getKeyCode() == KeyEvent.KEYCODE_BACK && web != null) {
             if (event.getAction() == KeyEvent.ACTION_UP) {
                 web.evaluateJavascript("window.NS ? NS.back() : false", value -> {
                     if (!"true".equals(value)) finish();
@@ -97,26 +128,58 @@ public class MainActivity extends Activity {
 
     @Override
     protected void onDestroy() {
-        network.shutdownNow();
         if (web != null) web.destroy();
         super.onDestroy();
     }
 
-    private void deliver(int id, int status, String body) {
-        final String js = "window.__nsHttp(" + id + "," + status + "," + JSONObject.quote(body) + ")";
-        runOnUiThread(() -> {
-            if (!isDestroyed()) web.evaluateJavascript(js, null);
-        });
+    /**
+     * Relais vers le serveur IPTV : la réponse est transmise en flux à la WebView, sans être copiée en mémoire.
+     * Pour les grandes listes (films, séries, chaînes), seuls les champs utiles sont gardés (voir JsonCompactor).
+     */
+    private WebResourceResponse proxy(String target, boolean compact) {
+        if (target == null || !(target.startsWith("http://") || target.startsWith("https://"))) {
+            return error(400, "Adresse invalide.");
+        }
+        try {
+            HttpURLConnection c = open(target);
+            int status = c.getResponseCode();
+            if (status < 200 || (status >= 300 && status < 400) || status > 599) {
+                return error(502, "Réponse inattendue du serveur (HTTP " + status + ").");
+            }
+            InputStream in = status >= 400 ? c.getErrorStream() : c.getInputStream();
+            if (in == null) in = new ByteArrayInputStream(new byte[0]);
+            if (compact && status < 300) in = JsonCompactor.compact(in);
+            return new WebResourceResponse("application/json", "utf-8", status, status < 300 ? "OK" : "Error", headers(), in);
+        } catch (SocketTimeoutException e) {
+            return error(504, "Délai de connexion dépassé. Le serveur ne répond pas.");
+        } catch (IOException | RuntimeException e) {
+            return error(502, "Impossible de joindre le serveur. Vérifiez l'URL ou votre connexion.");
+        }
     }
 
-    static String readAll(InputStream in) throws IOException {
-        if (in == null) return "";
-        ByteArrayOutputStream out = new ByteArrayOutputStream();
-        byte[] buffer = new byte[64 * 1024];
-        int n;
-        while ((n = in.read(buffer)) != -1) out.write(buffer, 0, n);
-        in.close();
-        return out.toString("UTF-8");
+    private WebResourceResponse asset(String path) {
+        String mime = path.endsWith(".js") ? "application/javascript"
+                : path.endsWith(".css") ? "text/css"
+                : path.endsWith(".png") ? "image/png"
+                : path.endsWith(".jpg") ? "image/jpeg"
+                : "text/html";
+        try {
+            return new WebResourceResponse(mime, "utf-8", 200, "OK", headers(), getAssets().open(path));
+        } catch (IOException e) {
+            return error(404, "Introuvable");
+        }
+    }
+
+    private static Map<String, String> headers() {
+        Map<String, String> h = new HashMap<>();
+        h.put("Access-Control-Allow-Origin", "*");
+        h.put("Cache-Control", "no-store");
+        return h;
+    }
+
+    private static WebResourceResponse error(int status, String message) {
+        byte[] body = ("{\"error\":" + JSONObject.quote(message) + "}").getBytes(StandardCharsets.UTF_8);
+        return new WebResourceResponse("application/json", "utf-8", status, "Error", headers(), new ByteArrayInputStream(body));
     }
 
     /** Requête GET qui suit aussi les redirections http ↔ https (que HttpURLConnection ignore). */
@@ -141,23 +204,6 @@ public class MainActivity extends Activity {
 
     /** Fonctions appelées depuis le JavaScript de l'interface (window.Android). */
     private class Bridge {
-
-        @JavascriptInterface
-        public void httpGet(final int id, final String url) {
-            network.execute(() -> {
-                try {
-                    HttpURLConnection c = open(url);
-                    int status = c.getResponseCode();
-                    String body = readAll(status >= 400 ? c.getErrorStream() : c.getInputStream());
-                    c.disconnect();
-                    deliver(id, status, body);
-                } catch (SocketTimeoutException e) {
-                    deliver(id, 0, "Délai de connexion dépassé. Le serveur ne répond pas.");
-                } catch (IOException | RuntimeException e) {
-                    deliver(id, 0, "Impossible de joindre le serveur. Vérifiez l'URL ou votre connexion.");
-                }
-            });
-        }
 
         @JavascriptInterface
         public void play(String json) {

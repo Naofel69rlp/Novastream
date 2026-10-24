@@ -73,9 +73,35 @@
       .map(function (w) { return w[0]; }).join("").toUpperCase();
   }
 
+  // Les affiches ne sont décodées que près de l'écran, puis libérées quand on s'en éloigne :
+  // une TV a peu de mémoire et des centaines d'affiches suffiraient à faire fermer l'appli.
+  var imageWatcher = ("IntersectionObserver" in window) ? new IntersectionObserver(function (entries) {
+    entries.forEach(function (e) {
+      var el = e.target;
+      if (e.isIntersecting) {
+        if (!el.getAttribute("src")) el.setAttribute("src", el.getAttribute("data-src"));
+      } else if (el.getAttribute("src")) {
+        el.removeAttribute("src");
+      }
+    });
+  }, { rootMargin: "900px 900px" }) : null;
+
   function img(src, onFail) {
     if (!src || !/^https?:/.test(src)) return null;
-    return h("img", { src: src, loading: "lazy", alt: "", onerror: function () { this.remove(); if (onFail) onFail(); } });
+    var el = h("img", { alt: "", decoding: "async", onerror: function () {
+      if (!this.getAttribute("src")) return;
+      if (imageWatcher) imageWatcher.unobserve(this);
+      this.remove();
+      if (onFail) onFail();
+    } });
+    if (imageWatcher) {
+      el.setAttribute("data-src", src);
+      imageWatcher.observe(el);
+    } else {
+      el.setAttribute("src", src);
+      el.setAttribute("loading", "lazy");
+    }
+    return el;
   }
 
   function str(v) {
@@ -111,26 +137,24 @@
 
   // ---------------------------------------------------------------- Réseau
 
-  var pending = {};
-  var nextId = 1;
+  // Dans l'appli Android, les requêtes passent par le relais interne /api (pas de CORS, réponse en flux,
+  // listes allégées). Dans un navigateur, on interroge directement le serveur.
+  var VIA_APP = !!window.Android && location.pathname.indexOf("/web/") === 0;
 
-  // Réponse de la couche Android (MainActivity.httpGet).
-  window.__nsHttp = function (id, status, body) {
-    var p = pending[id];
-    if (!p) return;
-    delete pending[id];
-    if (status >= 200 && status < 300) p.resolve(body);
-    else p.reject(new Error(status === 0 ? body : "Erreur HTTP " + status + " du serveur."));
-  };
-
-  function httpGet(url) {
+  function httpGet(url, compact) {
+    if (VIA_APP) {
+      return fetch("/api?u=" + encodeURIComponent(url) + (compact ? "&compact=1" : ""), { cache: "no-store" })
+        .catch(function () { throw new Error("Impossible de joindre le serveur. Vérifiez l'URL ou votre connexion."); })
+        .then(function (r) {
+          return r.text().then(function (text) {
+            if (r.ok) return text;
+            var message = null;
+            try { message = JSON.parse(text).error; } catch (e) { /* pas de détail */ }
+            throw new Error(message || "Erreur HTTP " + r.status + " du serveur.");
+          });
+        });
+    }
     return new Promise(function (resolve, reject) {
-      if (window.Android && window.Android.httpGet) {
-        var id = nextId++;
-        pending[id] = { resolve: resolve, reject: reject };
-        window.Android.httpGet(id, url);
-        return;
-      }
       var xhr = new XMLHttpRequest();
       xhr.open("GET", url);
       xhr.timeout = 30000;
@@ -154,12 +178,12 @@
   var Xtream = {
     creds: null,
 
-    api: function (action, params) {
+    api: function (action, params, compact) {
       var c = Xtream.creds;
       var q = "username=" + encodeURIComponent(c.username) + "&password=" + encodeURIComponent(c.password);
       if (action) q += "&action=" + action;
       Object.keys(params || {}).forEach(function (k) { q += "&" + k + "=" + encodeURIComponent(params[k]); });
-      return httpGet(c.server + "/player_api.php?" + q).then(function (text) {
+      return httpGet(c.server + "/player_api.php?" + q, compact).then(function (text) {
         try { return JSON.parse(text); }
         catch (e) { throw new Error("Réponse inattendue du serveur (pas du JSON valide)."); }
       });
@@ -186,7 +210,7 @@
     },
 
     list: function (action) {
-      return Xtream.api(action).then(function (d) { return Array.isArray(d) ? d : []; });
+      return Xtream.api(action, null, true).then(function (d) { return Array.isArray(d) ? d : []; });
     },
 
     streamUrl: function (kind, id, ext) {
@@ -749,17 +773,20 @@
       }
       var liveBox = h("div"), moviesBox = h("div"), seriesBox = h("div");
       append(rows, [liveBox, moviesBox, seriesBox]);
-      catalog("live").then(function (c) {
+      var liveLoaded = catalog("live");
+      var moviesLoaded = liveLoaded.catch(function () {}).then(function () { return catalog("movies"); });
+      var seriesLoaded = moviesLoaded.catch(function () {}).then(function () { return catalog("series"); });
+      liveLoaded.then(function (c) {
         if (!c.items.length || !document.contains(liveBox)) return;
         var list = c.items.slice(0, 20);
         liveBox.appendChild(section("En direct", list.map(function (ch, i) { return channelTile(list, i, "home-"); }),
           c.items.length + " chaînes"));
       }, function () {});
-      catalog("movies").then(function (c) {
+      moviesLoaded.then(function (c) {
         if (!c.items.length || !document.contains(moviesBox)) return;
         moviesBox.appendChild(section("Nouveaux films", recent(c.items, 20).map(function (m) { return posterCard(m, "home-" + m.id); })));
       }, function (err) { if (document.contains(moviesBox)) moviesBox.appendChild(h("p", { class: "page error", text: err.message })); });
-      catalog("series").then(function (c) {
+      seriesLoaded.then(function (c) {
         if (!c.items.length || !document.contains(seriesBox)) return;
         seriesBox.appendChild(section("Séries à découvrir", recent(c.items, 20).map(function (s) { return posterCard(s, "home-s" + s.id); })));
       }, function () {});
