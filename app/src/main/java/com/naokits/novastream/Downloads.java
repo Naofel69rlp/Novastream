@@ -38,7 +38,7 @@ final class Downloads {
             DownloadManager.Request r = new DownloadManager.Request(Uri.parse(url))
                     .setTitle(title)
                     .setDescription("NovaStream")
-                    .addRequestHeader("User-Agent", MainActivity.USER_AGENT)
+                    .addRequestHeader("User-Agent", UserAgents.current(ctx))
                     .setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
                     .setAllowedOverMetered(true)
                     .setAllowedOverRoaming(true)
@@ -167,6 +167,9 @@ final class Downloads {
             case DownloadManager.ERROR_HTTP_DATA_ERROR: return "Connexion interrompue";
             case DownloadManager.ERROR_UNHANDLED_HTTP_CODE: return "Refusé par le serveur";
             default:
+                if (reason == 401 || reason == 403) {
+                    return "Refusé par le serveur (HTTP " + reason + ") : connexions de l'abonnement atteintes ? Réessayez dans une minute";
+                }
                 if (reason >= 400 && reason < 600) return "Refusé par le serveur (HTTP " + reason + ")";
                 return "Échec du téléchargement";
         }

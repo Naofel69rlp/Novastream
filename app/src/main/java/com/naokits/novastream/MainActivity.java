@@ -40,8 +40,6 @@ import java.util.Map;
  */
 public class MainActivity extends Activity {
 
-    static final String USER_AGENT = "NovaStream-TV/1.0 (Linux; Android) ExoPlayer";
-
     /** Adresse interne : l'interface et le relais vers le serveur IPTV sont servis par l'appli elle-même. */
     static final String HOST = "appassets.androidplatform.net";
     static final String START_URL = "https://" + HOST + "/web/index.html";
@@ -191,13 +189,13 @@ public class MainActivity extends Activity {
     }
 
     /** Requête GET qui suit aussi les redirections http ↔ https (que HttpURLConnection ignore). */
-    static HttpURLConnection open(String address) throws IOException {
+    private HttpURLConnection open(String address) throws IOException {
         for (int hops = 0; hops < 5; hops++) {
             HttpURLConnection c = (HttpURLConnection) new URL(address).openConnection();
             c.setConnectTimeout(12000);
             c.setReadTimeout(45000);
             c.setInstanceFollowRedirects(false);
-            c.setRequestProperty("User-Agent", USER_AGENT);
+            c.setRequestProperty("User-Agent", UserAgents.current(this));
             c.setRequestProperty("Accept", "application/json, */*");
             int code = c.getResponseCode();
             if (code >= 300 && code < 400 && c.getHeaderField("Location") != null) {

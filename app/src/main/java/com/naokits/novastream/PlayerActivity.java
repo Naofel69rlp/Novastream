@@ -36,6 +36,7 @@ import androidx.media3.common.Tracks;
 import androidx.media3.common.util.UnstableApi;
 import androidx.media3.datasource.DefaultDataSource;
 import androidx.media3.datasource.DefaultHttpDataSource;
+import androidx.media3.datasource.HttpDataSource;
 import androidx.media3.exoplayer.ExoPlayer;
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory;
 import androidx.media3.ui.AspectRatioFrameLayout;
@@ -71,6 +72,9 @@ public class PlayerActivity extends Activity {
     private TextView banner;
     private TextView optionsButton;
     private int resizeIndex;
+    private DefaultHttpDataSource.Factory http;
+    private int uaIndex;
+    private int uaTries;
     private LinearLayout errorPanel;
     private TextView errorText;
     private String[] urls;
@@ -148,8 +152,9 @@ public class PlayerActivity extends Activity {
         root.addView(buildErrorPanel(), new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         setContentView(root);
 
-        DefaultHttpDataSource.Factory http = new DefaultHttpDataSource.Factory()
-                .setUserAgent(MainActivity.USER_AGENT)
+        uaIndex = UserAgents.index(this);
+        http = new DefaultHttpDataSource.Factory()
+                .setUserAgent(UserAgents.ALL[uaIndex])
                 .setAllowCrossProtocolRedirects(true)
                 .setConnectTimeoutMs(15000)
                 .setReadTimeoutMs(30000);
@@ -194,7 +199,25 @@ public class PlayerActivity extends Activity {
                     player.prepare();
                     return;
                 }
-                showError(error);
+                // Accès refusé : le serveur n'accepte peut-être pas cet identifiant de lecteur, on essaie le suivant.
+                int code = httpCode(error);
+                if ((code == 401 || code == 403 || code == 406) && uaTries < UserAgents.ALL.length - 1) {
+                    uaTries++;
+                    uaIndex = (uaIndex + 1) % UserAgents.ALL.length;
+                    http.setUserAgent(UserAgents.ALL[uaIndex]);
+                    player.prepare();
+                    player.play();
+                    return;
+                }
+                showError(error, code);
+            }
+
+            @Override
+            public void onPlaybackStateChanged(int state) {
+                if (state == Player.STATE_READY) {
+                    UserAgents.remember(PlayerActivity.this, uaIndex);
+                    uaTries = 0;
+                }
             }
         });
         player.setMediaItems(items, index, 0);
@@ -422,9 +445,32 @@ public class PlayerActivity extends Activity {
         return b;
     }
 
-    private void showError(PlaybackException error) {
-        errorText.setText("Le lecteur a répondu : " + error.getErrorCodeName()
-                + "\nEssayez un autre lecteur (VLC, MX Player…) ou, pour le direct, l'autre format dans Paramètres.");
+    /** Code HTTP renvoyé par le serveur, ou 0 si l'erreur ne vient pas d'une réponse HTTP. */
+    private static int httpCode(PlaybackException error) {
+        for (Throwable t = error.getCause(); t != null; t = t.getCause()) {
+            if (t instanceof HttpDataSource.InvalidResponseCodeException) {
+                return ((HttpDataSource.InvalidResponseCodeException) t).responseCode;
+            }
+        }
+        return 0;
+    }
+
+    private void showError(PlaybackException error, int code) {
+        String why;
+        if (code == 401 || code == 403) {
+            why = "Le serveur refuse l'accès (HTTP " + code + "). Le plus souvent, le nombre de connexions de l'abonnement "
+                    + "est atteint : fermez l'appli sur vos autres appareils, attendez une minute, puis réessayez.";
+        } else if (code == 404) {
+            why = "Cette vidéo n'existe plus sur le serveur (HTTP 404).";
+        } else if (code >= 500) {
+            why = "Le serveur IPTV est en difficulté (HTTP " + code + "). Réessayez dans quelques minutes.";
+        } else if (code > 0) {
+            why = "Le serveur a répondu HTTP " + code + ".";
+        } else {
+            why = "Le lecteur a répondu : " + error.getErrorCodeName() + ".";
+        }
+        errorText.setText(why + "\nVous pouvez aussi essayer un autre lecteur (VLC, MX Player…)"
+                + (live ? " ou l'autre format du flux dans Paramètres." : "."));
         errorPanel.setVisibility(View.VISIBLE);
         playerView.hideController();
         View first = ((ViewGroup) errorPanel.getChildAt(2)).getChildAt(0);
