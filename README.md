@@ -1,7 +1,9 @@
 # NovaStream TV
 
-Version **Android TV / Google TV / Fire TV** de NovaStream, l'appli IPTV Xtream Codes,
-pilotable entièrement à la télécommande.
+Version **Android** de NovaStream, l'appli IPTV Xtream Codes. Un seul APK pour :
+
+- **Android TV / Google TV / Fire TV** : menu latéral, tout se pilote à la télécommande ;
+- **téléphones et tablettes Android** : interface tactile avec barre d'onglets en bas, portrait ou paysage.
 
 - Connexion Xtream Codes (ou **mode démo** pour essayer sans abonnement).
 - Accueil, **En direct** (catégories + chaînes), **Films**, **Séries** (saisons, épisodes), **Ma liste**, **Recherche**, **Paramètres**.
@@ -26,6 +28,11 @@ https://github.com/Naofel69rlp/Novastream/releases/latest/download/NovaStream-TV
 
 Pour obtenir un code court : colle cette adresse sur <https://go.aftvnews.com/> et note le numéro donné.
 Le code reste valable à chaque nouvelle version, puisque l'adresse ne change pas.
+
+## Installer sur un téléphone Android
+
+Ouvre l'adresse ci-dessus dans Chrome sur le téléphone, télécharge le fichier, puis touche-le pour l'installer.
+Android demande d'autoriser Chrome à installer des applis inconnues : accepte pour cette fois.
 
 ## Mettre à jour
 

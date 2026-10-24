@@ -2,8 +2,11 @@ package com.naokits.novastream;
 
 import android.annotation.SuppressLint;
 import android.app.Activity;
+import android.app.UiModeManager;
 import android.content.Intent;
 import android.content.pm.PackageInfo;
+import android.content.pm.PackageManager;
+import android.content.res.Configuration;
 import android.os.Bundle;
 import android.view.KeyEvent;
 import android.webkit.JavascriptInterface;
@@ -178,6 +181,16 @@ public class MainActivity extends Activity {
             } catch (JSONException ignored) {
                 // Charge utile invalide : rien à lire.
             }
+        }
+
+        /** Vrai sur Android TV / Google TV / Fire TV : l'interface passe en mode télécommande. */
+        @JavascriptInterface
+        public boolean isTv() {
+            UiModeManager ui = (UiModeManager) getSystemService(UI_MODE_SERVICE);
+            if (ui != null && ui.getCurrentModeType() == Configuration.UI_MODE_TYPE_TELEVISION) return true;
+            PackageManager pm = getPackageManager();
+            return pm.hasSystemFeature("amazon.hardware.fire_tv")
+                    || !pm.hasSystemFeature(PackageManager.FEATURE_TOUCHSCREEN);
         }
 
         @JavascriptInterface

@@ -4,6 +4,13 @@
 (function () {
   "use strict";
 
+  // ---------------------------------------------------------------- Appareil
+
+  // TV : navigation à la télécommande. Téléphone/tablette : interface tactile.
+  var IS_TV = (window.Android && window.Android.isTv) ? window.Android.isTv()
+    : !(window.matchMedia && window.matchMedia("(pointer: coarse)").matches);
+  document.documentElement.classList.add(IS_TV ? "tv" : "touch");
+
   // ---------------------------------------------------------------- Utilitaires
 
   function h(tag, attrs) {
@@ -397,6 +404,7 @@
 
   function focus(el, scroll) {
     if (!el) return;
+    if (!IS_TV) return;  // au doigt, pas de sélection ni de défilement automatique
     el.focus({ preventScroll: true });
     if (scroll !== false) scrollIntoView(el);
     if (!el.closest(".nav")) lastContentFocus = el;
@@ -477,6 +485,13 @@
     return contentOnly ? null : document.querySelector(".nav .current");
   }
 
+  // Au doigt, un bouton touché ne doit pas rester surligné.
+  document.addEventListener("click", function () {
+    if (IS_TV) return;
+    var a = document.activeElement;
+    if (a && a.tagName !== "INPUT" && a.blur) setTimeout(function () { a.blur(); }, 0);
+  });
+
   document.addEventListener("keydown", function (e) {
     var key = e.key;
     var target = document.activeElement;
@@ -537,6 +552,9 @@
     } else {
       var main = h("main", { class: "main" });
       app.appendChild(h("div", { class: "shell" }, navBar(), main));
+      if (!IS_TV && S.stack.length > 1) {
+        main.appendChild(h("button", { class: "back-btn", "aria-label": "Retour", onclick: function () { NS.back(); } }, "‹"));
+      }
       main.appendChild(screen(top.params, main));
     }
     restoreFocus(top, keepNavFocus && wasNav);
@@ -584,14 +602,14 @@
   }
 
   var NAV = [
-    ["home", "Accueil", "home"], ["live", "En direct", "live"], ["movies", "Films", "movies"],
-    ["series", "Séries", "series"], ["favorites", "Ma liste", "heart"], ["search", "Rechercher", "search"]
+    ["home", "Accueil", "home"], ["live", "En direct", "live", "Direct"], ["movies", "Films", "movies"],
+    ["series", "Séries", "series"], ["favorites", "Ma liste", "heart", "Ma liste"], ["search", "Rechercher", "search", "Chercher"]
   ];
 
   function navBar() {
     var items = NAV.map(function (n) {
       return h("button", { class: "nav-item f" + (S.root === n[0] ? " current" : ""), "data-key": "nav-" + n[0],
-        onclick: function () { setRoot(n[0]); } }, icon(n[2]), n[1]);
+        onclick: function () { setRoot(n[0]); } }, icon(n[2]), h("span", { class: "label" }, n[1]), h("span", { class: "short" }, n[3] || n[1]));
     });
     var u = S.user || {};
     return h("nav", { class: "nav" },
@@ -602,7 +620,7 @@
         h("b", null, h("span", { class: "dot" }), u.username || ""),
         h("div", { class: "muted", text: S.demo ? "Mode démo" : "Expire le " + (u.expires || "") })),
       h("button", { class: "nav-item f" + (S.root === "settings" ? " current" : ""), "data-key": "nav-settings",
-        onclick: function () { setRoot("settings"); } }, icon("settings"), "Paramètres"));
+        onclick: function () { setRoot("settings"); } }, icon("settings"), h("span", { class: "label" }, "Paramètres"), h("span", { class: "short" }, "Réglages")));
   }
 
   function posterCard(item, key) {

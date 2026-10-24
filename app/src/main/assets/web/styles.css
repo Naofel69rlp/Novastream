@@ -168,8 +168,8 @@ button.setting:focus { outline: none; border-color: var(--accent-light); backgro
   border-top-color: var(--accent); animation: spin 0.8s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 .toast { position: fixed; bottom: 3rem; left: 50%; transform: translateX(-50%) translateY(10rem); background: var(--active);
-  padding: 1.2rem 2.4rem; border-radius: 99rem; font-size: 1.4rem; transition: transform 0.25s; z-index: 10; }
-.toast.show { transform: translateX(-50%) translateY(0); }
+  padding: 1.2rem 2.4rem; border-radius: 99rem; font-size: 1.4rem; transition: transform 0.25s, opacity 0.25s; z-index: 10; opacity: 0; }
+.toast.show { transform: translateX(-50%) translateY(0); opacity: 1; }
 
 /* Lecteur de secours (navigateur, hors appli Android) */
 .web-player { position: fixed; inset: 0; background: #000; z-index: 20; display: flex; align-items: center; justify-content: center; }
@@ -181,3 +181,93 @@ button.setting:focus { outline: none; border-color: var(--accent-light); backgro
   color: var(--muted); font-size: 2rem; }
 .fav-btn.on { color: var(--cinema); }
 .fav-btn:focus { outline: none; background: var(--active); border-color: var(--accent-light); }
+
+/* ================================================================
+   Téléphones et tablettes en portrait (interface tactile)
+   ================================================================ */
+.nav-item .short { display: none; }
+.back-btn { display: none; }
+.touch body, .touch .main { -webkit-tap-highlight-color: transparent; }
+.touch .main { -webkit-overflow-scrolling: touch; scroll-behavior: auto; }
+.touch .poster:active .art, .touch .tile:active, .touch .btn:active, .touch .channel:active { transform: scale(0.97); }
+
+@media (max-width: 1000px), (orientation: portrait) {
+  html.touch { font-size: 10px; }
+  .touch body { font-size: 1.5rem; }
+
+  /* Barre d'onglets en bas */
+  .touch .shell { flex-direction: column; }
+  .touch .nav { position: fixed; left: 0; right: 0; bottom: 0; z-index: 5; width: auto; height: auto;
+    flex-direction: row; justify-content: space-around; padding: 0.4rem 0.2rem calc(0.4rem + env(safe-area-inset-bottom));
+    border-right: none; border-top: 1px solid var(--border); gap: 0; }
+  .touch .nav .logo, .touch .nav .account, .touch .nav .nav-spacer { display: none; }
+  .touch .nav-item { flex: 1; flex-direction: column; gap: 0.3rem; padding: 0.6rem 0; border: none; border-radius: 0.8rem;
+    font-size: 1rem; align-items: center; color: var(--muted); min-width: 0; }
+  .touch .nav-item svg { width: 2.2rem; height: 2.2rem; }
+  .touch .nav-item .label { display: none; }
+  .touch .nav-item .short { display: block; white-space: nowrap; }
+  .touch .nav-item.current { background: none; color: #fff; }
+  .touch .nav-item.current svg { color: var(--accent-light); }
+  .touch .main { height: 100vh; padding-bottom: 6.6rem; }
+
+  .touch .back-btn { display: flex; position: fixed; top: 1.2rem; left: 1.2rem; z-index: 4; width: 4.2rem; height: 4.2rem;
+    border-radius: 50%; border: none; background: rgba(17,17,22,0.85); color: #fff; font-size: 3rem; line-height: 1;
+    align-items: center; justify-content: center; padding-bottom: 0.4rem; }
+
+  /* Pages */
+  .touch .page { padding: 2rem 1.6rem 4rem; }
+  .touch .page-title { font-size: 2.6rem; margin-bottom: 1.4rem; }
+  .touch .hero { height: 40rem; padding: 0 1.6rem 2.4rem; background-position: 60% center; }
+  .touch .hero h1 { font-size: 3rem; }
+  .touch .hero p { font-size: 1.4rem; }
+  .touch .hero .actions { flex-wrap: wrap; }
+  .touch .btn { padding: 1.1rem 1.6rem; font-size: 1.4rem; }
+  .touch .section { margin-top: 2.2rem; }
+  .touch .section-head { padding: 0 1.6rem 0.8rem; }
+  .touch .section-head h2 { font-size: 1.8rem; }
+  .touch .row { padding: 0.6rem 1.6rem 1rem; gap: 1.2rem; }
+  .touch .poster { width: 11.5rem; }
+  .touch .tile { width: 12.5rem; height: 11rem; padding: 1.1rem; }
+  .touch .logo-box { width: 4.4rem; height: 4.4rem; font-size: 1.4rem; }
+  .touch .grid { grid-template-columns: repeat(auto-fill, minmax(10rem, 1fr)); gap: 1.8rem 1.2rem; }
+
+  /* Direct et catalogues : catégories en pastilles défilantes au-dessus de la liste */
+  .touch .columns { flex-direction: column; height: auto; gap: 1.2rem; }
+  .touch .col { padding: 0; border: none; background: none; border-radius: 0; overflow: visible; }
+  .touch .cats { width: auto; flex-direction: row; overflow-x: auto; gap: 0.8rem; margin: 0 -1.6rem; padding: 0 1.6rem 0.4rem; }
+  .touch .cats::-webkit-scrollbar { display: none; }
+  .touch .cats .col-head { display: none; }
+  .touch .cat { border-radius: 99rem; background: var(--card); border: 1px solid var(--border); padding: 0.8rem 1.4rem; font-size: 1.3rem; }
+  .touch .cat.current { background: #fff; color: #000; border-color: #fff; font-weight: 700; }
+  .touch .catalog-body { overflow: visible; padding: 0; }
+  .touch .col-head { padding: 0.4rem 0 1rem; }
+  .touch .channel { padding: 0.6rem 0.4rem; gap: 1.2rem; }
+  .touch .channel .name { font-size: 1.45rem; }
+
+  /* Fiches */
+  .touch .detail .backdrop { height: 34rem; }
+  .touch .detail .top { flex-direction: column; align-items: flex-start; gap: 1.6rem; padding: 7rem 1.6rem 1.6rem; }
+  .touch .detail .cover { width: 13rem; }
+  .touch .detail h1 { font-size: 2.8rem; }
+  .touch .detail .meta, .touch .detail .plot { font-size: 1.4rem; }
+  .touch .detail .plot { -webkit-line-clamp: 6; }
+  .touch .detail .actions { flex-wrap: wrap; }
+  .touch .episodes { padding: 0 1.6rem 4rem; }
+  .touch .episodes h2 { font-size: 2rem; }
+  .touch .seasons { flex-wrap: nowrap; overflow-x: auto; margin: 0 -1.6rem 1.4rem; padding: 0 1.6rem; }
+  .touch .seasons::-webkit-scrollbar { display: none; }
+  .touch .episode { gap: 1.2rem; padding: 0.6rem 0; align-items: flex-start; }
+  .touch .episode .thumb { width: 12rem; font-size: 2rem; }
+  .touch .episode h3 { font-size: 1.4rem; }
+  .touch .episode p { font-size: 1.2rem; }
+
+  /* Connexion et réglages */
+  .touch .login { align-items: flex-start; overflow-y: auto; padding: 4rem 2rem;
+    background: linear-gradient(180deg, rgba(9,9,11,0.6), var(--bg) 40%), url("hero.jpg") center top / cover; }
+  .touch .login-card { width: 100%; max-width: 48rem; }
+  .touch .login-card h1 { font-size: 2.8rem; }
+  .touch .login-card .actions { flex-direction: column; }
+  .touch .login-card .actions .btn { justify-content: center; }
+  .touch .setting { font-size: 1.4rem; padding: 1.3rem 1.4rem; }
+  .touch .toast { bottom: 9rem; }
+}
