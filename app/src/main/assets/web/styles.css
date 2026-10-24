@@ -311,3 +311,18 @@ button.setting:focus { outline: none; border-color: var(--accent-light); backgro
   .touch .dl-item { gap: 1.2rem; padding: 0.8rem; }
   .touch .dl-info h3 { font-size: 1.4rem; }
 }
+
+/* ---------- Recherche ---------- */
+.search-bar { display: flex; gap: 1.2rem; align-items: stretch; }
+.search-bar .input { flex: 1; }
+.search-go { flex: none; }
+.search-summary { display: flex; flex-wrap: wrap; gap: 1rem; margin: 1.8rem 0 0.4rem; }
+.found { padding: 0.7rem 1.4rem; border-radius: 99rem; font-size: 1.35rem; background: var(--card); border: 1px solid var(--border); }
+.found.yes { color: #6ee7b7; border-color: rgba(16,185,129,0.5); }
+.found.no { color: #fca5a5; border-color: rgba(239,68,68,0.4); }
+.found.wait { color: var(--muted); }
+.found b { color: #fff; }
+.search-head { font-size: 2rem; margin: 2.6rem 0 1.2rem; }
+.search-head .muted { font-weight: 600; font-size: 1.5rem; }
+.settings-head { font-size: 1.7rem; margin: 2rem 0 0.4rem; color: var(--text2); }
+.settings-note { font-size: 1.2rem; padding: 0.2rem 0.4rem; }

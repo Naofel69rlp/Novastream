@@ -479,7 +479,17 @@
     return S.demo ? DEMO_URL : Xtream.streamUrl("live", ch.id, S.liveFormat);
   }
 
+  // Préférences du lecteur (Paramètres) : langue audio, sous-titres et format de l'image selon le type.
+  var LANGS = [["", "Automatique"], ["fr", "Français"], ["en", "Anglais"], ["ar", "Arabe"], ["es", "Espagnol"],
+    ["it", "Italien"], ["de", "Allemand"], ["pt", "Portugais"], ["tr", "Turc"], ["nl", "Néerlandais"]];
+  var SUBS = [["off", "Désactivés"]].concat(LANGS.slice(1));
+  var RESIZE = [["fit", "Adapté à l'écran"], ["zoom", "Plein écran (zoom)"], ["fill", "Étiré"]];
+
   function play(payload) {
+    var kind = payload.kind || (payload.live ? "live" : "movie");
+    payload.audioLang = store.get("audioLang", "");
+    payload.subLang = store.get("subLang", "off");
+    payload.resize = store.get("resize." + kind, "fit");
     Sound.playing(true);
     if (window.Android && window.Android.play) {
       window.Android.play(JSON.stringify(payload));
@@ -495,17 +505,17 @@
   var webPlayer = null;
 
   function playLive(channels, index) {
-    play({ live: true, index: index, titles: channels.map(function (c) { return c.name; }),
+    play({ live: true, kind: "live", index: index, titles: channels.map(function (c) { return c.name; }),
       urls: channels.map(liveUrl), subtitle: "En direct" });
   }
 
   function playMovie(item) {
-    play({ live: false, index: 0, titles: [item.name], subtitle: item.year || "",
+    play({ live: false, kind: "movie", index: 0, titles: [item.name], subtitle: item.year || "",
       urls: [DL.localFile("movie-" + item.id) || (S.demo ? DEMO_URL : Xtream.streamUrl("movie", item.id, item.ext))] });
   }
 
   function playEpisodes(show, season, episodes, index) {
-    play({ live: false, index: index, subtitle: show.name,
+    play({ live: false, kind: "series", index: index, subtitle: show.name,
       titles: episodes.map(function (e) { return "S" + season + " É" + e.num + " · " + (e.title || "Épisode " + e.num); }),
       urls: episodes.map(function (e) {
         return DL.localFile("ep-" + e.id) || (S.demo ? DEMO_URL : Xtream.streamUrl("series", e.id, e.ext));
@@ -1061,6 +1071,30 @@
     return items.slice().sort(function (a, b) { return b.added - a.added; }).slice(0, n);
   }
 
+  // Texte de recherche sans accents, majuscules ni ponctuation : « Spider-Man » = « spiderman » = « spider man ».
+  function normalize(text) {
+    var t = str(text).toLowerCase();
+    if (t.normalize) t = t.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+    return t.replace(/[^a-z0-9]+/g, " ").trim();
+  }
+
+  function searchIn(items, q) {
+    var words = q.split(" "), joined = q.replace(/ /g, "");
+    var found = [];
+    items.forEach(function (it) {
+      var n = it._n || (it._n = normalize(it.name));
+      var score = -1;
+      if (n === q) score = 0;
+      else if (n.indexOf(q) === 0) score = 1;
+      else if (n.indexOf(q) !== -1) score = 2;
+      else if (words.every(function (w) { return n.indexOf(w) !== -1; })) score = 3;
+      else if (joined.length > 3 && n.replace(/ /g, "").indexOf(joined) !== -1) score = 4;
+      if (score >= 0) found.push([score, it]);
+    });
+    found.sort(function (a, b) { return a[0] - b[0]; });
+    return found.map(function (f) { return f[1]; });
+  }
+
   function section(title, children, more) {
     return h("section", { class: "section" },
       h("div", { class: "section-head" }, h("h2", { text: title }), more ? h("span", { class: "muted", text: more }) : null),
@@ -1314,7 +1348,8 @@
         var item = h("button", { class: "dl-item f", "data-key": "dl-" + d.key, onclick: function () {
           var st = DL.state(d);
           if (st.status === "done" && st.file) {
-            play({ live: false, index: 0, titles: [d.title], subtitle: d.subtitle || "", urls: [st.file] });
+            play({ live: false, kind: d.kind === "episode" ? "series" : "movie", index: 0, titles: [d.title],
+              subtitle: d.subtitle || "", urls: [st.file] });
           } else if (st.status === "failed" || st.status === "missing") {
             var entry = { key: d.key, kind: d.kind, title: d.title, subtitle: d.subtitle, image: d.image, url: d.url, ext: d.ext };
             DL.add(entry);
@@ -1384,40 +1419,69 @@
     search: function (params) {
       var input = h("input", { class: "input f", placeholder: "Une chaîne, un film, une série…", value: params.q || "",
         "data-autofocus": true, "data-key": "search-input", autocomplete: "off", "data-enter": "search" });
+      var goBtn = h("button", { class: "btn f search-go", "data-key": "search-go", onclick: function () { submit(); } },
+        icon("search"), "Rechercher");
+      var summary = h("div", { class: "search-summary" });
       var results = h("div");
-      var timer = null;
+      var timer = null, lastQuery = null, jump = false;
+
+      // Validation : on lance la recherche et on descend sur le premier résultat dès qu'il arrive.
+      function submit() {
+        clearTimeout(timer);
+        jump = true;
+        lastQuery = null;
+        run();
+      }
+
+      function badge(label, count, loading) {
+        var text = loading ? "recherche…" : count ? count + (count > 1 ? " trouvés" : " trouvé") : "introuvable";
+        return h("span", { class: "found " + (loading ? "wait" : count ? "yes" : "no") }, h("b", { text: label + " : " }), text);
+      }
 
       function run() {
-        var q = str(input.value).toLowerCase();
+        var q = normalize(input.value);
         params.q = input.value;
+        if (q === lastQuery) return;
+        lastQuery = q;
         results.innerHTML = "";
+        summary.innerHTML = "";
         if (q.length < 2) {
-          results.appendChild(h("p", { class: "empty", text: "Tapez au moins deux lettres." }));
+          jump = false;
+          results.appendChild(h("p", { class: "empty", text: "Tapez au moins deux lettres, puis validez." }));
           return;
         }
-        Promise.all(["live", "movies", "series"].map(function (s) {
-          return catalog(s).catch(function () { return { items: [] }; });
+        append(summary, [badge("TV", 0, true), badge("Films", 0, true), badge("Séries", 0, true)]);
+        results.appendChild(h("div", { class: "loader" }));
+        Promise.all(["live", "movies", "series"].map(function (sec) {
+          return catalog(sec).catch(function () { return { items: [], failed: true }; });
         })).then(function (all) {
-          if (str(input.value).toLowerCase() !== q) return;
-          var match = function (i) { return i.name.toLowerCase().indexOf(q) !== -1; };
-          var ch = all[0].items.filter(match).slice(0, 30);
-          var mv = all[1].items.filter(match).slice(0, 60);
-          var se = all[2].items.filter(match).slice(0, 60);
+          if (lastQuery !== q) return;
+          var ch = searchIn(all[0].items, q), mv = searchIn(all[1].items, q), se = searchIn(all[2].items, q);
+          summary.innerHTML = "";
+          append(summary, [badge("TV", ch.length), badge("Films", mv.length), badge("Séries", se.length)]);
           results.innerHTML = "";
-          if (!ch.length && !mv.length && !se.length) results.appendChild(h("p", { class: "empty", text: "Aucun résultat pour « " + input.value + " »." }));
-          if (ch.length) results.appendChild(h("div", null, h("h2", { text: "Chaînes", style: "margin:2.4rem 0 1.2rem" }),
-            h("div", { class: "grid" }, ch.map(function (c, i) { return channelTile(ch, i, "sr-"); }))));
-          if (mv.length) results.appendChild(h("div", null, h("h2", { text: "Films", style: "margin:2.4rem 0 1.2rem" }),
-            h("div", { class: "grid" }, mv.map(function (m) { return posterCard(m); }))));
-          if (se.length) results.appendChild(h("div", null, h("h2", { text: "Séries", style: "margin:2.4rem 0 1.2rem" }),
-            h("div", { class: "grid" }, se.map(function (s) { return posterCard(s); }))));
+          function block(title, list, build, failed) {
+            var head = h("h2", { class: "search-head" }, title + " ",
+              h("span", { class: "muted", text: failed ? "· catalogue indisponible" : list.length ? "· " + list.length : "· introuvable" }));
+            results.appendChild(head);
+            if (list.length) results.appendChild(h("div", { class: "grid" }, list.slice(0, 60).map(build)));
+          }
+          block("Chaînes TV", ch, function (c, i) { return channelTile(ch, i, "sr-"); }, all[0].failed);
+          block("Films", mv, function (m) { return posterCard(m); }, all[1].failed);
+          block("Séries", se, function (x) { return posterCard(x); }, all[2].failed);
+          var firstResult = results.querySelector(".f");
+          if (jump && firstResult && results.isConnected) focus(firstResult);
+          jump = false;
         });
       }
 
-      input.addEventListener("input", function () { clearTimeout(timer); timer = setTimeout(run, 350); });
-      enterHooks.search = function () { clearTimeout(timer); run(); move("down"); };
+      input.addEventListener("input", function () { clearTimeout(timer); timer = setTimeout(run, 400); });
+      // Clavier de la TV fermé ou validé : on lance la recherche tout de suite.
+      input.addEventListener("change", function () { clearTimeout(timer); run(); });
+      enterHooks.search = submit;
       run();
-      return h("div", { class: "page" }, h("h1", { class: "page-title display", text: "Rechercher" }), input, results);
+      return h("div", { class: "page" }, h("h1", { class: "page-title display", text: "Rechercher" }),
+        h("div", { class: "search-bar" }, input, goBtn), summary, results);
     },
 
     settings: function () {
@@ -1426,10 +1490,28 @@
         S.liveFormat = S.liveFormat === "ts" ? "m3u8" : "ts";
         store.set("liveFormat", S.liveFormat);
         formatBtn.lastChild.textContent = formatLabel();
-      } }, h("span", { text: "Format du direct" }), h("span", { text: formatLabel() }));
+      } }, h("span", { text: "Format du flux des chaînes" }), h("span", { text: formatLabel() }));
 
       function row(label, value) {
         return h("div", { class: "setting" }, h("span", { text: label }), h("span", { text: value }));
+      }
+
+      // Réglage à choix : chaque appui passe à la valeur suivante.
+      function choice(label, key, options, fallback) {
+        var btn = h("button", { class: "setting f", "data-key": "set-" + key }, h("span", { text: label }), h("span"));
+        function paint() {
+          var v = store.get(key, fallback);
+          var o = options.find(function (x) { return x[0] === v; }) || options[0];
+          btn.lastChild.textContent = o[1] + "  ›";
+        }
+        btn.addEventListener("click", function () {
+          var v = store.get(key, fallback);
+          var i = options.findIndex(function (x) { return x[0] === v; });
+          store.set(key, options[(i + 1) % options.length][0]);
+          paint();
+        });
+        paint();
+        return btn;
       }
 
       function toggle(label, key, onChange) {
@@ -1447,7 +1529,15 @@
           row("Expire le", u.expires || ""),
           row("Connexions", u.connections || ""),
           row("Serveur", S.demo ? "Mode démo" : Xtream.creds.server),
+          h("h2", { class: "settings-head", text: "Lecture" }),
+          choice("Langue audio préférée", "audioLang", LANGS, ""),
+          choice("Sous-titres", "subLang", SUBS, "off"),
+          choice("Format de l'image : films", "resize.movie", RESIZE, "fit"),
+          choice("Format de l'image : séries", "resize.series", RESIZE, "fit"),
+          choice("Format de l'image : chaînes", "resize.live", RESIZE, "fit"),
           formatBtn,
+          h("p", { class: "muted settings-note", text: "Pendant une vidéo, le bouton « Langue · Sous-titres · Format » (en haut à droite, ou la touche Menu) change ces réglages pour la vidéo en cours." }),
+          h("h2", { class: "settings-head", text: "Sons" }),
           toggle("Musique d'ambiance", "music", Sound.update),
           toggle("Sons de l'interface", "sfx"),
           h("button", { class: "setting f", "data-key": "set-reload", "data-autofocus": true, onclick: function () {

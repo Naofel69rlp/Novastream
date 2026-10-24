@@ -1,6 +1,7 @@
 package com.naokits.novastream;
 
 import android.app.Activity;
+import android.app.AlertDialog;
 import android.content.ActivityNotFoundException;
 import android.content.Intent;
 import android.graphics.Color;
@@ -23,19 +24,26 @@ import android.widget.TextView;
 import android.widget.Toast;
 
 import androidx.annotation.OptIn;
+import androidx.media3.common.C;
+import androidx.media3.common.Format;
 import androidx.media3.common.MediaItem;
 import androidx.media3.common.MediaMetadata;
 import androidx.media3.common.PlaybackException;
 import androidx.media3.common.Player;
+import androidx.media3.common.TrackSelectionOverride;
+import androidx.media3.common.TrackSelectionParameters;
+import androidx.media3.common.Tracks;
 import androidx.media3.common.util.UnstableApi;
 import androidx.media3.datasource.DefaultDataSource;
 import androidx.media3.datasource.DefaultHttpDataSource;
 import androidx.media3.exoplayer.ExoPlayer;
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory;
+import androidx.media3.ui.AspectRatioFrameLayout;
 import androidx.media3.ui.PlayerView;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 
 /**
  * Lecteur plein écran (ExoPlayer) : lit HLS, MPEG-TS, MP4 et MKV, en ligne ou téléchargés.
@@ -49,10 +57,20 @@ public class PlayerActivity extends Activity {
     static final String EXTRA_INDEX = "index";
     static final String EXTRA_LIVE = "live";
     static final String EXTRA_SUBTITLE = "subtitle";
+    static final String EXTRA_AUDIO_LANG = "audioLang";
+    static final String EXTRA_SUB_LANG = "subLang";
+    static final String EXTRA_RESIZE = "resize";
+
+    private static final String[] RESIZE_KEYS = {"fit", "zoom", "fill"};
+    private static final String[] RESIZE_LABELS = {"Adapté à l'écran", "Plein écran (zoom)", "Étiré"};
+    private static final int[] RESIZE_MODES = {
+            AspectRatioFrameLayout.RESIZE_MODE_FIT, AspectRatioFrameLayout.RESIZE_MODE_ZOOM, AspectRatioFrameLayout.RESIZE_MODE_FILL};
 
     private ExoPlayer player;
     private PlayerView playerView;
     private TextView banner;
+    private TextView optionsButton;
+    private int resizeIndex;
     private LinearLayout errorPanel;
     private TextView errorText;
     private String[] urls;
@@ -100,6 +118,33 @@ public class PlayerActivity extends Activity {
         bannerParams.setMargins(dp(40), dp(32), dp(40), 0);
         root.addView(banner, bannerParams);
 
+        // Bouton « Langue · Sous-titres · Format », visible avec les commandes du lecteur.
+        optionsButton = new TextView(this);
+        optionsButton.setText("Langue · Sous-titres · Format");
+        optionsButton.setTextColor(Color.WHITE);
+        optionsButton.setTextSize(TypedValue.COMPLEX_UNIT_SP, 16);
+        optionsButton.setTypeface(Typeface.DEFAULT_BOLD);
+        optionsButton.setPadding(dp(20), dp(12), dp(20), dp(12));
+        optionsButton.setBackground(rounded(0xCC262638, 12));
+        optionsButton.setFocusable(true);
+        optionsButton.setClickable(true);
+        optionsButton.setVisibility(View.GONE);
+        optionsButton.setOnClickListener(v -> showOptions());
+        optionsButton.setOnFocusChangeListener((v, hasFocus) ->
+                v.setBackground(rounded(hasFocus ? 0xFF3B82F6 : 0xCC262638, 12)));
+        FrameLayout.LayoutParams optionsParams = new FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        optionsParams.gravity = Gravity.TOP | Gravity.END;
+        optionsParams.setMargins(dp(40), dp(32), dp(40), 0);
+        root.addView(optionsButton, optionsParams);
+        playerView.setControllerVisibilityListener(new PlayerView.ControllerVisibilityListener() {
+            @Override
+            public void onVisibilityChanged(int visibility) {
+                boolean hadFocus = optionsButton.hasFocus();
+                optionsButton.setVisibility(visibility == View.VISIBLE ? View.VISIBLE : View.GONE);
+                if (hadFocus && visibility != View.VISIBLE) playerView.requestFocus();
+            }
+        });
+
         root.addView(buildErrorPanel(), new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         setContentView(root);
 
@@ -114,6 +159,18 @@ public class PlayerActivity extends Activity {
                 .setSeekForwardIncrementMs(30000)
                 .build();
         playerView.setPlayer(player);
+
+        // Préférences choisies dans Paramètres.
+        resizeIndex = Math.max(0, java.util.Arrays.asList(RESIZE_KEYS).indexOf(intent.getStringExtra(EXTRA_RESIZE)));
+        playerView.setResizeMode(RESIZE_MODES[resizeIndex]);
+        String audioLang = intent.getStringExtra(EXTRA_AUDIO_LANG);
+        String subLang = intent.getStringExtra(EXTRA_SUB_LANG);
+        boolean subsOff = subLang == null || subLang.isEmpty() || "off".equals(subLang);
+        player.setTrackSelectionParameters(player.getTrackSelectionParameters().buildUpon()
+                .setPreferredAudioLanguage(audioLang == null || audioLang.isEmpty() ? null : audioLang)
+                .setPreferredTextLanguage(subsOff ? null : subLang)
+                .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, subsOff)
+                .build());
 
         List<MediaItem> items = new ArrayList<>();
         for (int i = 0; i < urls.length; i++) {
@@ -183,12 +240,124 @@ public class PlayerActivity extends Activity {
                 zap(1);
                 return true;
             }
-            if (code == KeyEvent.KEYCODE_INFO || code == KeyEvent.KEYCODE_MENU) {
+            if (code == KeyEvent.KEYCODE_INFO) {
                 showBanner();
+                return true;
+            }
+            if (code == KeyEvent.KEYCODE_MENU || code == KeyEvent.KEYCODE_CAPTIONS
+                    || code == KeyEvent.KEYCODE_MEDIA_AUDIO_TRACK || code == KeyEvent.KEYCODE_SETTINGS) {
+                showOptions();
                 return true;
             }
         }
         return super.dispatchKeyEvent(event);
+    }
+
+    // ---------------------------------------------------------------- Langue, sous-titres, format
+
+    /** Menu des options de la vidéo en cours : langue audio, sous-titres, format de l'image. */
+    private void showOptions() {
+        String[] rows = {
+                "Langue audio : " + selectedLabel(C.TRACK_TYPE_AUDIO, "Automatique"),
+                "Sous-titres : " + selectedLabel(C.TRACK_TYPE_TEXT, "Désactivés"),
+                "Format de l'image : " + RESIZE_LABELS[resizeIndex]
+        };
+        new AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
+                .setTitle("Options de lecture")
+                .setItems(rows, (d, which) -> {
+                    if (which == 0) chooseTrack(C.TRACK_TYPE_AUDIO);
+                    else if (which == 1) chooseTrack(C.TRACK_TYPE_TEXT);
+                    else chooseResize();
+                })
+                .show();
+    }
+
+    private void chooseResize() {
+        new AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
+                .setTitle("Format de l'image")
+                .setSingleChoiceItems(RESIZE_LABELS, resizeIndex, (d, which) -> {
+                    resizeIndex = which;
+                    playerView.setResizeMode(RESIZE_MODES[which]);
+                    d.dismiss();
+                })
+                .show();
+    }
+
+    /** Liste les pistes audio (ou de sous-titres) du flux et applique celle choisie. */
+    private void chooseTrack(int type) {
+        List<Tracks.Group> groups = new ArrayList<>();
+        List<Integer> indexes = new ArrayList<>();
+        List<String> labels = new ArrayList<>();
+        int checked = -1;
+        if (type == C.TRACK_TYPE_TEXT) {
+            labels.add("Désactivés");
+            groups.add(null);
+            indexes.add(-1);
+            if (player.getTrackSelectionParameters().disabledTrackTypes.contains(C.TRACK_TYPE_TEXT)) checked = 0;
+        }
+        for (Tracks.Group g : player.getCurrentTracks().getGroups()) {
+            if (g.getType() != type) continue;
+            for (int i = 0; i < g.length; i++) {
+                if (!g.isTrackSupported(i)) continue;
+                if (g.isTrackSelected(i) && checked < 0) checked = labels.size();
+                groups.add(g);
+                indexes.add(i);
+                labels.add(trackLabel(g.getTrackFormat(i), labels.size() + (type == C.TRACK_TYPE_TEXT ? 0 : 1)));
+            }
+        }
+        if (checked < 0 && type == C.TRACK_TYPE_TEXT) checked = 0;
+        boolean none = type == C.TRACK_TYPE_AUDIO ? groups.isEmpty() : groups.size() <= 1;
+        if (none) {
+            Toast.makeText(this, type == C.TRACK_TYPE_AUDIO ? "Cette vidéo n'a qu'une seule langue."
+                    : "Aucun sous-titre dans cette vidéo.", Toast.LENGTH_LONG).show();
+            return;
+        }
+        new AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
+                .setTitle(type == C.TRACK_TYPE_AUDIO ? "Langue audio" : "Sous-titres")
+                .setSingleChoiceItems(labels.toArray(new String[0]), checked, (d, which) -> {
+                    TrackSelectionParameters.Builder b = player.getTrackSelectionParameters().buildUpon();
+                    Tracks.Group g = groups.get(which);
+                    if (g == null) {
+                        b.setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true);
+                    } else {
+                        b.setTrackTypeDisabled(type, false)
+                                .setOverrideForType(new TrackSelectionOverride(g.getMediaTrackGroup(), indexes.get(which)));
+                    }
+                    player.setTrackSelectionParameters(b.build());
+                    d.dismiss();
+                })
+                .show();
+    }
+
+    private String selectedLabel(int type, String fallback) {
+        if (player == null) return fallback;
+        if (type == C.TRACK_TYPE_TEXT && player.getTrackSelectionParameters().disabledTrackTypes.contains(C.TRACK_TYPE_TEXT)) {
+            return fallback;
+        }
+        for (Tracks.Group g : player.getCurrentTracks().getGroups()) {
+            if (g.getType() != type) continue;
+            for (int i = 0; i < g.length; i++) {
+                if (g.isTrackSelected(i)) return trackLabel(g.getTrackFormat(i), 0);
+            }
+        }
+        return fallback;
+    }
+
+    /** « Français (5.1) », « Anglais », ou « Piste 2 » si le flux ne précise pas la langue. */
+    private static String trackLabel(Format f, int number) {
+        String name = null;
+        if (f.language != null && !f.language.isEmpty() && !"und".equals(f.language)) {
+            String display = new Locale(f.language).getDisplayLanguage(Locale.FRENCH);
+            if (display != null && !display.isEmpty() && !display.equalsIgnoreCase(f.language)) {
+                name = display.substring(0, 1).toUpperCase(Locale.FRENCH) + display.substring(1);
+            } else {
+                name = f.language.toUpperCase(Locale.ROOT);
+            }
+        }
+        if (f.label != null && !f.label.isEmpty()) name = name == null ? f.label : name + " · " + f.label;
+        if (name == null) name = number > 0 ? "Piste " + number : "Piste";
+        if (f.channelCount >= 6) name += " (5.1)";
+        return name;
     }
 
     // ---------------------------------------------------------------- Erreurs de lecture

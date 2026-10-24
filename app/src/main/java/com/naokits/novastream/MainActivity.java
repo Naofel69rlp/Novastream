@@ -231,6 +231,9 @@ public class MainActivity extends Activity {
                 intent.putExtra(PlayerActivity.EXTRA_INDEX, o.optInt("index", 0));
                 intent.putExtra(PlayerActivity.EXTRA_LIVE, o.optBoolean("live", false));
                 intent.putExtra(PlayerActivity.EXTRA_SUBTITLE, o.optString("subtitle", ""));
+                intent.putExtra(PlayerActivity.EXTRA_AUDIO_LANG, o.optString("audioLang", ""));
+                intent.putExtra(PlayerActivity.EXTRA_SUB_LANG, o.optString("subLang", "off"));
+                intent.putExtra(PlayerActivity.EXTRA_RESIZE, o.optString("resize", "fit"));
                 runOnUiThread(() -> startActivity(intent));
             } catch (JSONException ignored) {
                 // Charge utile invalide : rien à lire.
