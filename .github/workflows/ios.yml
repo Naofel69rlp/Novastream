@@ -1,0 +1,63 @@
+# Compile l'appli iPhone sur un Mac de GitHub et publie un .ipa non signé
+# (à installer avec Sideloadly / AltStore, qui le signent avec ton Apple ID).
+# Lien fixe : https://github.com/<compte>/Novastream/releases/download/ios/NovaStream-iOS.ipa
+name: Construire l'IPA iPhone
+
+on:
+  push:
+    branches: [main]
+    paths: ["ios/**", ".github/workflows/ios.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: macos-15
+    defaults:
+      run:
+        working-directory: ios
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Version de Xcode
+        run: xcodebuild -version
+
+      - name: Compiler (sans signature)
+        run: |
+          set -o pipefail
+          xcodebuild \
+            -project NovaStream.xcodeproj \
+            -scheme NovaStream \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
+            build | tee build.log | grep -E "error:|warning: .*deprecated|BUILD (SUCCEEDED|FAILED)" || true
+          test -d build/Build/Products/Release-iphoneos/NovaStream.app
+
+      - name: Afficher les erreurs
+        if: failure()
+        run: grep -E "error:" build.log | head -50 || true
+
+      - name: Empaqueter le .ipa
+        run: |
+          mkdir -p Payload
+          cp -R build/Build/Products/Release-iphoneos/NovaStream.app Payload/
+          zip -qry NovaStream-iOS.ipa Payload
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: NovaStream-iOS
+          path: ios/NovaStream-iOS.ipa
+
+      - name: Publier
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ios
+          name: NovaStream iPhone
+          body: "Appli iPhone non signée. Installation avec Sideloadly : voir ios/README.md."
+          files: ios/NovaStream-iOS.ipa
+          make_latest: false
