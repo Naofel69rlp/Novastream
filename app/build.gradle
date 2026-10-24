@@ -1,0 +1,53 @@
+plugins {
+    id "com.android.application"
+}
+
+android {
+    namespace "com.naokits.novastream"
+    compileSdk 34
+
+    defaultConfig {
+        applicationId "com.naokits.novastream.tv"
+        minSdk 21
+        targetSdk 34
+        // Numéro de build fourni par GitHub Actions pour que chaque APK remplace le précédent.
+        versionCode((System.getenv("GITHUB_RUN_NUMBER") ?: "1").toInteger())
+        versionName "1.0." + (System.getenv("GITHUB_RUN_NUMBER") ?: "0")
+    }
+
+    signingConfigs {
+        // Clé dédiée à cette appli installée hors Play Store : toutes les versions sont signées pareil,
+        // ce qui permet de mettre à jour sans désinstaller.
+        release {
+            storeFile file("novastream-release.jks")
+            storePassword "novastream"
+            keyAlias "novastream"
+            keyPassword "novastream"
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            signingConfig signingConfigs.release
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_1_8
+        targetCompatibility JavaVersion.VERSION_1_8
+    }
+
+    lint {
+        checkReleaseBuilds false
+        abortOnError false
+    }
+}
+
+dependencies {
+    def media3 = "1.4.1"
+    implementation "androidx.media3:media3-exoplayer:$media3"
+    implementation "androidx.media3:media3-exoplayer-hls:$media3"
+    implementation "androidx.media3:media3-ui:$media3"
+    implementation "androidx.annotation:annotation-experimental:1.4.1"
+}

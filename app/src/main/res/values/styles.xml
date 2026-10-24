@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="NovaTheme" parent="@android:style/Theme.DeviceDefault.NoActionBar.Fullscreen">
+        <item name="android:windowBackground">@color/nova_bg</item>
+        <item name="android:colorAccent">@color/nova_accent</item>
+    </style>
+    <color name="nova_bg">#FF09090B</color>
+    <color name="nova_accent">#FF3B82F6</color>
+</resources>
