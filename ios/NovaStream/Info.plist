@@ -20,6 +20,9 @@
 		<key>UIColorName</key>
 		<string>LaunchBackground</string>
 	</dict>
+	<!-- Uniquement HTTPS standard d'iOS : pas de déclaration d'export à remplir dans TestFlight. -->
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
 	<key>LSApplicationQueriesSchemes</key>
 	<array>
 		<string>vlc-x-callback</string>
