@@ -108,8 +108,15 @@ public class MainActivity extends Activity {
         super.onResume();
         if (web != null) {
             web.requestFocus();
-            web.evaluateJavascript("window.NS && NS.focus()", null);
+            web.evaluateJavascript("window.NS && (NS.focus(), NS.resume && NS.resume())", null);
         }
+    }
+
+    @Override
+    protected void onPause() {
+        // Lecteur ouvert ou appli en arrière-plan : on coupe la musique d'ambiance.
+        if (web != null) web.evaluateJavascript("window.NS && NS.pause && NS.pause()", null);
+        super.onPause();
     }
 
     @Override
@@ -162,6 +169,7 @@ public class MainActivity extends Activity {
                 : path.endsWith(".css") ? "text/css"
                 : path.endsWith(".png") ? "image/png"
                 : path.endsWith(".jpg") ? "image/jpeg"
+                : path.endsWith(".ogg") ? "audio/ogg"
                 : "text/html";
         try {
             return new WebResourceResponse(mime, "utf-8", 200, "OK", headers(), getAssets().open(path));
@@ -227,6 +235,27 @@ public class MainActivity extends Activity {
             } catch (JSONException ignored) {
                 // Charge utile invalide : rien à lire.
             }
+        }
+
+        /** Téléchargements (voir Downloads) : lancement, suivi, suppression. */
+        @JavascriptInterface
+        public String download(String json) {
+            return Downloads.start(MainActivity.this, json);
+        }
+
+        @JavascriptInterface
+        public String downloads(String idsJson) {
+            return Downloads.status(MainActivity.this, idsJson);
+        }
+
+        @JavascriptInterface
+        public void removeDownload(String id) {
+            Downloads.remove(MainActivity.this, id);
+        }
+
+        @JavascriptInterface
+        public double freeSpace() {
+            return Downloads.freeSpace(MainActivity.this);
         }
 
         /** Vrai sur Android TV / Google TV / Fire TV : l'interface passe en mode télécommande. */

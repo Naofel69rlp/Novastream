@@ -28,6 +28,7 @@ import androidx.media3.common.MediaMetadata;
 import androidx.media3.common.PlaybackException;
 import androidx.media3.common.Player;
 import androidx.media3.common.util.UnstableApi;
+import androidx.media3.datasource.DefaultDataSource;
 import androidx.media3.datasource.DefaultHttpDataSource;
 import androidx.media3.exoplayer.ExoPlayer;
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory;
@@ -37,7 +38,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Lecteur plein écran (ExoPlayer) : lit HLS, MPEG-TS, MP4 et MKV.
+ * Lecteur plein écran (ExoPlayer) : lit HLS, MPEG-TS, MP4 et MKV, en ligne ou téléchargés.
  * Direct : haut/bas ou CH+/CH- changent de chaîne. Films et séries : l'épisode suivant s'enchaîne.
  */
 @OptIn(markerClass = UnstableApi.class)
@@ -108,7 +109,7 @@ public class PlayerActivity extends Activity {
                 .setConnectTimeoutMs(15000)
                 .setReadTimeoutMs(30000);
         player = new ExoPlayer.Builder(this)
-                .setMediaSourceFactory(new DefaultMediaSourceFactory(this).setDataSourceFactory(http))
+                .setMediaSourceFactory(new DefaultMediaSourceFactory(this).setDataSourceFactory(new DefaultDataSource.Factory(this, http)))
                 .setSeekBackIncrementMs(10000)
                 .setSeekForwardIncrementMs(30000)
                 .build();

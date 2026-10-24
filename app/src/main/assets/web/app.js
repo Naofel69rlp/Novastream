@@ -46,7 +46,9 @@
     settings: '<circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M4.2 4.2l2.1 2.1M17.7 17.7l2.1 2.1M2 12h3M19 12h3M4.2 19.8l2.1-2.1M17.7 6.3l2.1-2.1"/>',
     play: '<path d="M7 4v16l13-8z" fill="currentColor"/>',
     plus: '<path d="M12 5v14M5 12h14"/>',
-    check: '<path d="m5 12 5 5 9-10"/>'
+    check: '<path d="m5 12 5 5 9-10"/>',
+    download: '<path d="M12 3v12M7 10l5 5 5-5M5 21h14"/>',
+    trash: '<path d="M4 7h16M9 7V4h6v3M6 7l1 14h10l1-14"/>'
   };
 
   function icon(name) {
@@ -134,6 +136,98 @@
       try { localStorage.removeItem("ns." + key); } catch (e) { /* stockage indisponible */ }
     }
   };
+
+  // ---------------------------------------------------------------- Sons (ceux de la version Windows)
+
+  // Musique d'ambiance douce en boucle pendant la navigation, clic à la validation, transition entre écrans
+  // et petit tic à chaque déplacement de la sélection. Coupé pendant la lecture d'une vidéo.
+  var Sound = (function () {
+    var Ctx = window.AudioContext || window.webkitAudioContext;
+    var ctx = null, buffers = {}, music = null, musicGain = null, pendingClick = null, lastTick = 0;
+    var visible = true, playing = false;
+    var MUSIC_VOLUME = 0.12;
+
+    function init() {
+      if (ctx || !Ctx) return;
+      try { ctx = new Ctx(); } catch (e) { ctx = null; return; }
+      musicGain = ctx.createGain();
+      musicGain.gain.value = 0;
+      musicGain.connect(ctx.destination);
+      ["click", "transition", "ambient"].forEach(function (name) {
+        fetch("audio/" + name + ".ogg").then(function (r) { return r.arrayBuffer(); }).then(function (data) {
+          return new Promise(function (resolve, reject) { ctx.decodeAudioData(data, resolve, reject); });
+        }).then(function (buffer) {
+          buffers[name] = buffer;
+          if (name === "ambient") update();
+        }).catch(function () { /* son indisponible : on continue sans */ });
+      });
+    }
+
+    function wake() {
+      if (ctx && ctx.state === "suspended" && visible) ctx.resume();
+    }
+
+    function effect(name, volume, rate) {
+      if (!store.get("sfx", true) || !ctx || !buffers[name] || !visible) return;
+      wake();
+      var src = ctx.createBufferSource();
+      src.buffer = buffers[name];
+      if (rate) src.playbackRate.value = rate;
+      var gain = ctx.createGain();
+      gain.gain.value = volume;
+      src.connect(gain);
+      gain.connect(ctx.destination);
+      src.start(0);
+    }
+
+    function update() {
+      if (!ctx) return;
+      var want = store.get("music", true) && visible && !playing;
+      if (want && !music && buffers.ambient) {
+        music = ctx.createBufferSource();
+        music.buffer = buffers.ambient;
+        music.loop = true;
+        music.connect(musicGain);
+        music.start(0);
+      }
+      var t = ctx.currentTime;
+      musicGain.gain.cancelScheduledValues(t);
+      musicGain.gain.setValueAtTime(musicGain.gain.value, t);
+      musicGain.gain.linearRampToValueAtTime(want ? MUSIC_VOLUME : 0, t + (want ? 1.5 : 0.35));
+      if (want) wake();
+    }
+
+    // Le navigateur peut exiger une première action avant de jouer un son.
+    ["keydown", "touchstart", "mousedown"].forEach(function (type) {
+      document.addEventListener(type, function () { init(); wake(); update(); }, { capture: true, passive: true });
+    });
+    init();
+
+    return {
+      click: function () {
+        clearTimeout(pendingClick);
+        pendingClick = setTimeout(function () { effect("click", 0.2); }, 0);
+      },
+      transition: function () {
+        clearTimeout(pendingClick);  // un écran qui change remplace le clic par la transition
+        effect("transition", 0.18);
+      },
+      tick: function () {
+        var now = Date.now();
+        if (now - lastTick < 60) return;
+        lastTick = now;
+        effect("click", 0.06, 1.3);
+      },
+      playing: function (on) { playing = on; update(); },
+      visible: function (on) {
+        visible = on;
+        if (!ctx) return;
+        if (on) { playing = false; musicGain.gain.setValueAtTime(0, ctx.currentTime); ctx.resume(); update(); }
+        else ctx.suspend();
+      },
+      update: update
+    };
+  })();
 
   // ---------------------------------------------------------------- Réseau
 
@@ -333,8 +427,9 @@
     catalogs: {},  // live / movies / series → { cats, items } ou une promesse en cours
     favorites: store.get("favorites", []),
     liveFormat: store.get("liveFormat", "ts"),
-    stack: [],     // pile de navigation : { name, params, focus }
-    root: "home"
+    stack: [],     // pile de navigation : { name, params, focus, el (écran gardé) }
+    root: "home",
+    version: 0     // change quand Ma liste change : les écrans gardés sont alors reconstruits
   };
 
   function catalog(section) {
@@ -375,6 +470,7 @@
       toast("Ajouté à Ma liste");
     }
     store.set("favorites", S.favorites);
+    S.version++;
   }
 
   // ---------------------------------------------------------------- Lecture
@@ -384,6 +480,7 @@
   }
 
   function play(payload) {
+    Sound.playing(true);
     if (window.Android && window.Android.play) {
       window.Android.play(JSON.stringify(payload));
       return;
@@ -404,13 +501,209 @@
 
   function playMovie(item) {
     play({ live: false, index: 0, titles: [item.name], subtitle: item.year || "",
-      urls: [S.demo ? DEMO_URL : Xtream.streamUrl("movie", item.id, item.ext)] });
+      urls: [DL.localFile("movie-" + item.id) || (S.demo ? DEMO_URL : Xtream.streamUrl("movie", item.id, item.ext))] });
   }
 
   function playEpisodes(show, season, episodes, index) {
     play({ live: false, index: index, subtitle: show.name,
       titles: episodes.map(function (e) { return "S" + season + " É" + e.num + " · " + (e.title || "Épisode " + e.num); }),
-      urls: episodes.map(function (e) { return S.demo ? DEMO_URL : Xtream.streamUrl("series", e.id, e.ext); }) });
+      urls: episodes.map(function (e) {
+        return DL.localFile("ep-" + e.id) || (S.demo ? DEMO_URL : Xtream.streamUrl("series", e.id, e.ext));
+      }) });
+  }
+
+  // ---------------------------------------------------------------- Téléchargements
+
+  // Le fichier est récupéré par le gestionnaire de téléchargements d'Android (il continue appli fermée).
+  // Un seul téléchargement à la fois : la plupart des abonnements n'autorisent qu'une connexion.
+  var DEMO_FILE = "https://test-videos.co.uk/vids/bigbuckbunny/mp4/h264/360/Big_Buck_Bunny_360_10s_1MB.mp4";
+  var ACTIVE = { pending: 1, running: 1, paused: 1 };
+
+  var DL = {
+    available: !!(window.Android && window.Android.download),
+    list: store.get("downloads", []),  // { key, id, kind, title, subtitle, image, url, ext, added }
+    status: {},                         // id Android → { status, done, total, file, reason }
+
+    find: function (key) { return DL.list.find(function (d) { return d.key === key; }) || null; },
+
+    state: function (d) {
+      if (!d) return { status: "none" };
+      if (!d.id) return { status: "queued", done: 0, total: 0 };
+      return DL.status[d.id] || { status: "pending", done: 0, total: 0 };
+    },
+
+    localFile: function (key) {
+      var st = DL.state(DL.find(key));
+      return st.status === "done" && st.file ? st.file : null;
+    },
+
+    save: function () { store.set("downloads", DL.list); },
+
+    // Plus récents d'abord ; les épisodes d'une même saison restent dans l'ordre.
+    sorted: function () {
+      return DL.list.slice().sort(function (a, b) { return (b.added - a.added) || ((a.order || 0) - (b.order || 0)); });
+    },
+
+    add: function (entry) {
+      if (!DL.available) { toast("Le téléchargement est disponible dans l'appli Android (TV ou téléphone)."); return false; }
+      var old = DL.find(entry.key);
+      if (old && DL.state(old).status !== "failed" && DL.state(old).status !== "missing") return false;
+      if (old) DL.forget(old);
+      entry.added = entry.added || Date.now();
+      entry.order = entry.order || 0;
+      entry.id = null;
+      DL.list.unshift(entry);
+      DL.save();
+      DL.pump();
+      return true;
+    },
+
+    forget: function (d) {
+      if (d.id && window.Android) window.Android.removeDownload(d.id);
+      if (d.id) delete DL.status[d.id];
+      DL.list = DL.list.filter(function (x) { return x !== d; });
+      DL.save();
+    },
+
+    refresh: function () {
+      if (!DL.available) return;
+      var ids = DL.list.filter(function (d) { return d.id; }).map(function (d) { return d.id; });
+      if (!ids.length) return;
+      try {
+        JSON.parse(window.Android.downloads(JSON.stringify(ids))).forEach(function (st) { DL.status[st.id] = st; });
+      } catch (e) { /* état indisponible */ }
+    },
+
+    // Lance le plus ancien téléchargement en attente quand aucun n'est en cours.
+    pump: function () {
+      DL.refresh();
+      var busy = DL.list.some(function (d) { return d.id && ACTIVE[DL.state(d).status]; });
+      if (busy) return;
+      var next = DL.list.slice().sort(function (a, b) { return (a.added - b.added) || ((a.order || 0) - (b.order || 0)); })
+        .find(function (d) { return !d.id; });
+      if (!next) return;
+      var res = {};
+      try {
+        res = JSON.parse(window.Android.download(JSON.stringify({ url: next.url, title: next.title, ext: next.ext })));
+      } catch (e) { res = { error: "Téléchargement impossible." }; }
+      if (res.error) {
+        toast(res.error);
+        DL.list = DL.list.filter(function (x) { return x !== next; });
+      } else {
+        next.id = res.id;
+        DL.status[res.id] = { status: "pending", done: 0, total: 0 };
+      }
+      DL.save();
+    },
+
+    // Les boutons et lignes de téléchargement visibles se mettent à jour tout seuls.
+    watch: function (el, paint) {
+      el.__paint = paint;
+      el.classList.add("dlw");
+      paint();
+      return el;
+    },
+
+    repaint: function (root) {
+      Array.prototype.forEach.call((root || document).querySelectorAll(".dlw"), function (el) { el.__paint(); });
+    },
+
+    tick: function () {
+      if (!DL.available || !DL.list.length) return;
+      var visible = document.querySelectorAll(".dlw");
+      var active = DL.list.some(function (d) { return !d.id || ACTIVE[DL.state(d).status]; });
+      if (!active && !visible.length) return;
+      DL.pump();
+      DL.repaint();
+    }
+  };
+
+  setInterval(function () { if (!document.hidden) DL.tick(); }, 1500);
+
+  function bytes(n) {
+    if (!n || n < 0) return "";
+    if (n >= 1e9) return (n / 1e9).toFixed(1).replace(".", ",") + " Go";
+    return Math.round(n / 1e6) + " Mo";
+  }
+
+  // Texte court décrivant l'état d'un téléchargement.
+  function dlLabel(d) {
+    var st = DL.state(d);
+    switch (st.status) {
+      case "done": return "Téléchargé" + (st.total > 0 ? " · " + bytes(st.total) : "");
+      case "queued": return "En file d'attente";
+      case "pending": return "Démarrage…";
+      case "running":
+        return st.total > 0 ? Math.floor(st.done * 100 / st.total) + " % · " + bytes(st.done) + " sur " + bytes(st.total)
+          : "En cours · " + bytes(st.done);
+      case "paused": return st.reason || "En pause";
+      case "failed": return "Échec : " + (st.reason || "téléchargement interrompu");
+      case "missing": return "Fichier supprimé";
+      default: return "";
+    }
+  }
+
+  function dlProgress(d) {
+    var st = DL.state(d);
+    if (st.status === "done") return 1;
+    return st.total > 0 ? st.done / st.total : 0;
+  }
+
+  function movieDownload(item) {
+    return { key: "movie-" + item.id, kind: "movie", title: item.name, subtitle: item.year || "Film", image: item.image,
+      url: S.demo ? DEMO_FILE : Xtream.streamUrl("movie", item.id, item.ext), ext: S.demo ? "mp4" : (item.ext || "mp4") };
+  }
+
+  function episodeDownload(show, season, e) {
+    return { key: "ep-" + e.id, kind: "episode", title: show.name + " · S" + season + " É" + e.num,
+      subtitle: e.title || "Épisode " + e.num, image: e.image || show.image,
+      url: S.demo ? DEMO_FILE : Xtream.streamUrl("series", e.id, e.ext), ext: S.demo ? "mp4" : (e.ext || "mp4") };
+  }
+
+  // Bouton « Télécharger » d'une fiche film : affiche la progression puis « Téléchargé ».
+  function downloadButton(entry) {
+    var btn = h("button", { class: "btn secondary f", "data-key": "dl" });
+    function paint() {
+      var d = DL.find(entry().key), st = DL.state(d).status;
+      btn.innerHTML = "";
+      if (st === "done") append(btn, [icon("check"), "Téléchargé"]);
+      else if (st === "none" || st === "failed" || st === "missing") append(btn, [icon("download"), st === "none" ? "Télécharger" : "Réessayer le téléchargement"]);
+      else append(btn, [icon("download"), st === "running" ? Math.floor(dlProgress(d) * 100) + " %" : "En attente…"]);
+    }
+    btn.addEventListener("click", function () {
+      var e = entry(), d = DL.find(e.key), st = DL.state(d).status;
+      if (st === "none" || st === "failed" || st === "missing") {
+        if (DL.add(e)) toast("Téléchargement lancé : " + e.title);
+      } else {
+        go("downloads");
+        return;
+      }
+      paint();
+    });
+    if (!DL.available) return null;
+    return DL.watch(btn, paint);
+  }
+
+  // Petit bouton rond à côté d'un épisode.
+  function episodeDownloadButton(entry) {
+    var btn = h("button", { class: "fav-btn dl-mini f", "data-key": "epdl-" + entry.key, title: "Télécharger" });
+    function paint() {
+      var d = DL.find(entry.key), st = DL.state(d).status;
+      btn.innerHTML = "";
+      btn.classList.toggle("on", st === "done");
+      if (st === "done") btn.appendChild(icon("check"));
+      else if (st === "running") btn.appendChild(h("span", { class: "pct", text: Math.floor(dlProgress(d) * 100) + "%" }));
+      else if (st === "queued" || st === "pending" || st === "paused") btn.appendChild(h("span", { class: "pct", text: "…" }));
+      else btn.appendChild(icon("download"));
+    }
+    btn.addEventListener("click", function () {
+      var st = DL.state(DL.find(entry.key)).status;
+      if (st === "none" || st === "failed" || st === "missing") {
+        if (DL.add(entry)) toast("Téléchargement lancé : " + entry.title);
+      } else toast(entry.title + " : " + dlLabel(DL.find(entry.key)));
+      paint();
+    });
+    return DL.watch(btn, paint);
   }
 
   // ---------------------------------------------------------------- Navigation à la télécommande
@@ -438,12 +731,35 @@
 
   var focusHooks = {};
 
+  // Défilement animé maison : court, interrompable, et instantané quand une flèche reste enfoncée.
+  // (Le défilement « smooth » du navigateur saccade sur les TV et fausse la position des éléments.)
+  var fastScroll = false;
+
+  function scrollTo(box, prop, delta) {
+    var max = prop === "scrollLeft" ? box.scrollWidth - box.clientWidth : box.scrollHeight - box.clientHeight;
+    var from = box[prop];
+    var to = Math.max(0, Math.min(max, Math.round(from + delta)));
+    var key = "__anim" + prop;
+    if (box[key]) cancelAnimationFrame(box[key]);
+    box[key] = 0;
+    if (to === from) return;
+    if (fastScroll || !IS_TV) { box[prop] = to; return; }
+    var start = null, duration = 170;
+    function step(t) {
+      if (start === null) start = t;
+      var k = Math.min(1, (t - start) / duration);
+      box[prop] = from + (to - from) * (1 - Math.pow(1 - k, 3));
+      box[key] = k < 1 ? requestAnimationFrame(step) : 0;
+    }
+    box[key] = requestAnimationFrame(step);
+  }
+
   function scrollIntoView(el) {
-    var row = el.closest(".row");
-    if (row) {
+    var row = el.closest(".row, .seasons");
+    if (row && row.scrollWidth > row.clientWidth) {
       var r = el.getBoundingClientRect(), rr = row.getBoundingClientRect();
-      if (r.left < rr.left + 30) row.scrollLeft -= (rr.left + 40 - r.left);
-      else if (r.right > rr.right - 30) row.scrollLeft += (r.right - rr.right + 40);
+      if (r.left < rr.left + 30) scrollTo(row, "scrollLeft", r.left - rr.left - 40);
+      else if (r.right > rr.right - 30) scrollTo(row, "scrollLeft", r.right - rr.right + 40);
     }
     var box = el.parentElement;
     while (box && box !== document.body) {
@@ -454,8 +770,8 @@
     if (!box || box === document.body) return;
     var er = el.getBoundingClientRect(), br = box.getBoundingClientRect();
     var margin = Math.min(br.height * 0.25, 160);
-    if (er.top < br.top + margin) box.scrollTop -= (br.top + margin - er.top);
-    else if (er.bottom > br.bottom - margin) box.scrollTop += (er.bottom - br.bottom + margin);
+    if (er.top < br.top + margin) scrollTo(box, "scrollTop", er.top - br.top - margin);
+    else if (er.bottom > br.bottom - margin) scrollTo(box, "scrollTop", er.bottom - br.bottom + margin);
   }
 
   function move(dir) {
@@ -492,7 +808,7 @@
     if (best && best.closest(".nav") && !fromNav) {
       best = document.querySelector(".nav .current") || best;
     }
-    if (best) focus(best);
+    if (best) { focus(best); Sound.tick(); }
   }
 
   function gap(a1, a2, b1, b2) {
@@ -522,12 +838,20 @@
     var typing = target && target.tagName === "INPUT";
 
     if (webPlayer && (key === "Escape" || key === "Backspace" || key === "GoBack")) {
-      webPlayer.remove(); webPlayer = null; e.preventDefault(); return;
+      webPlayer.remove(); webPlayer = null; Sound.playing(false); e.preventDefault(); return;
     }
-    if (key === "ArrowUp" || key === "ArrowDown") { e.preventDefault(); move(key === "ArrowUp" ? "up" : "down"); return; }
-    if (key === "ArrowLeft" || key === "ArrowRight") {
-      if (typing && target.value && !(key === "ArrowLeft" ? target.selectionStart === 0 : target.selectionEnd === target.value.length)) return;
-      e.preventDefault(); move(key === "ArrowLeft" ? "left" : "right"); return;
+    if (key === "ArrowUp" || key === "ArrowDown" || key === "ArrowLeft" || key === "ArrowRight") {
+      var horizontal = key === "ArrowLeft" || key === "ArrowRight";
+      if (horizontal && typing && target.value && !(key === "ArrowLeft" ? target.selectionStart === 0 : target.selectionEnd === target.value.length)) return;
+      e.preventDefault();
+      // Flèche maintenue : on avance à un rythme régulier, sans animation, pour que l'affichage suive.
+      var now = Date.now();
+      if (e.repeat && now - lastMoveAt < 85) return;
+      lastMoveAt = now;
+      fastScroll = e.repeat;
+      move({ ArrowUp: "up", ArrowDown: "down", ArrowLeft: "left", ArrowRight: "right" }[key]);
+      fastScroll = false;
+      return;
     }
     if (key === "Enter" && target && target.classList.contains("f") && !typing) {
       e.preventDefault(); target.click(); return;
@@ -545,13 +869,35 @@
   });
 
   var enterHooks = {};
+  var lastMoveAt = 0;
+
+  // Clic sonore sur chaque bouton validé (la transition le remplace si l'écran change).
+  document.addEventListener("click", function (e) {
+    if (e.target && e.target.closest && e.target.closest("button")) Sound.click();
+  }, true);
 
   // ---------------------------------------------------------------- Écrans
 
   function go(name, params) {
-    if (S.stack.length) S.stack[S.stack.length - 1].focus = focusPath(document.activeElement);
+    if (S.stack.length) keep(S.stack[S.stack.length - 1]);
     S.stack.push({ name: name, params: params || {} });
     render();
+  }
+
+  // L'écran quitté est gardé tel quel (position, sélection) : le retour est instantané, sans tout reconstruire.
+  var currentScreen = null;
+
+  function keep(entry) {
+    entry.focus = focusPath(document.activeElement);
+    if (!currentScreen || entry.name === "login") return;
+    var main = currentScreen.parentNode;
+    entry.el = currentScreen;
+    entry.version = S.version;
+    entry.focusEl = document.activeElement;
+    entry.scrolls = [[null, main ? main.scrollTop : 0, 0]];
+    Array.prototype.forEach.call(currentScreen.querySelectorAll(".col, .catalog-body, .row, .seasons"), function (b) {
+      if (b.scrollTop || b.scrollLeft) entry.scrolls.push([b, b.scrollTop, b.scrollLeft]);
+    });
   }
 
   function setRoot(name) {
@@ -570,8 +916,11 @@
     var top = S.stack[S.stack.length - 1];
     var screen = SCREENS[top.name];
     var wasNav = document.activeElement && document.activeElement.closest && document.activeElement.closest(".nav");
+    var first = !app.firstChild || app.firstChild.classList.contains("loader");
+    if (!first) Sound.transition();
     app.innerHTML = "";
     if (top.name === "login") {
+      currentScreen = null;
       app.appendChild(screen(top.params));
     } else {
       var main = h("main", { class: "main" });
@@ -579,14 +928,28 @@
       if (!IS_TV && S.stack.length > 1) {
         main.appendChild(h("button", { class: "back-btn", "aria-label": "Retour", onclick: function () { NS.back(); } }, "‹"));
       }
-      main.appendChild(screen(top.params, main));
+      var cached = top.el && top.version === S.version ? top.el : null;
+      top.el = null;
+      currentScreen = cached || screen(top.params);
+      if (!first) currentScreen.classList.add("enter");
+      main.appendChild(currentScreen);
+      if (cached) {
+        top.scrolls.forEach(function (sc) {
+          if (!sc[0]) main.scrollTop = sc[1];
+          else { sc[0].scrollTop = sc[1]; sc[0].scrollLeft = sc[2]; }
+        });
+        DL.repaint(cached);
+      }
     }
-    restoreFocus(top, keepNavFocus && wasNav);
+    restoreFocus(top, keepNavFocus && wasNav, cached);
   }
 
-  function restoreFocus(top, toNav) {
+  function restoreFocus(top, toNav, cached) {
     wantsContentFocus = false;
     if (toNav) { focus(document.querySelector(".nav .current"), false); return; }
+    var kept = top.focusEl;
+    top.focusEl = null;
+    if (cached && kept && kept.isConnected && kept.offsetParent !== null) { focus(kept, false); return; }
     if (top.focus) {
       var el = app.querySelector('[data-key="' + cssEscape(top.focus) + '"]');
       if (el) { focus(el); return; }
@@ -609,9 +972,10 @@
     var token = {};
     container.__token = token;
     promise.then(function (data) {
-      if (container.__token !== token || !document.contains(container)) return;
+      if (container.__token !== token) return;
       container.innerHTML = "";
       append(container, build(data));
+      if (!container.isConnected) return;  // écran mis de côté : il sera prêt au retour
       var top = S.stack[S.stack.length - 1];
       var active = document.activeElement;
       if (wantsContentFocus || !active || active === document.body || !document.contains(active)) restoreFocus(top);
@@ -627,8 +991,9 @@
 
   var NAV = [
     ["home", "Accueil", "home"], ["live", "En direct", "live", "Direct"], ["movies", "Films", "movies"],
-    ["series", "Séries", "series"], ["favorites", "Ma liste", "heart", "Ma liste"], ["search", "Rechercher", "search", "Chercher"]
-  ];
+    ["series", "Séries", "series"], ["favorites", "Ma liste", "heart", "Ma liste"],
+    ["downloads", "Téléchargés", "download", "Téléch."], ["search", "Rechercher", "search", "Chercher"]
+  ].filter(function (n) { return n[0] !== "downloads" || DL.available; });
 
   function navBar() {
     var items = NAV.map(function (n) {
@@ -777,17 +1142,17 @@
       var moviesLoaded = liveLoaded.catch(function () {}).then(function () { return catalog("movies"); });
       var seriesLoaded = moviesLoaded.catch(function () {}).then(function () { return catalog("series"); });
       liveLoaded.then(function (c) {
-        if (!c.items.length || !document.contains(liveBox)) return;
+        if (!c.items.length) return;
         var list = c.items.slice(0, 20);
         liveBox.appendChild(section("En direct", list.map(function (ch, i) { return channelTile(list, i, "home-"); }),
           c.items.length + " chaînes"));
       }, function () {});
       moviesLoaded.then(function (c) {
-        if (!c.items.length || !document.contains(moviesBox)) return;
+        if (!c.items.length) return;
         moviesBox.appendChild(section("Nouveaux films", recent(c.items, 20).map(function (m) { return posterCard(m, "home-" + m.id); })));
-      }, function (err) { if (document.contains(moviesBox)) moviesBox.appendChild(h("p", { class: "page error", text: err.message })); });
+      }, function (err) { moviesBox.appendChild(h("p", { class: "page error", text: err.message })); });
       seriesLoaded.then(function (c) {
-        if (!c.items.length || !document.contains(seriesBox)) return;
+        if (!c.items.length) return;
         seriesBox.appendChild(section("Séries à découvrir", recent(c.items, 20).map(function (s) { return posterCard(s, "home-s" + s.id); })));
       }, function () {});
       return page;
@@ -847,7 +1212,8 @@
           director: str(i.director), cast: str(i.cast || i.actors)
         }, [
           h("button", { class: "btn f", "data-autofocus": true, "data-key": "play", onclick: function () { playMovie(item); } }, icon("play"), "Lecture"),
-          favoriteButton(item)
+          favoriteButton(item),
+          downloadButton(function () { return movieDownload(item); })
         ]);
       });
       return page;
@@ -873,14 +1239,29 @@
           var eps = d.seasons[s] || [];
           list.innerHTML = "";
           if (!eps.length) list.appendChild(h("p", { class: "empty", text: "Aucun épisode disponible." }));
+          if (eps.length && DL.available) {
+            list.appendChild(h("button", { class: "chip f season-dl", "data-key": "season-dl-" + s, onclick: function () {
+              var now = Date.now();
+              var added = eps.filter(function (e, i) {
+                var entry = episodeDownload(item, s, e);
+                entry.added = now;
+                entry.order = i;
+                return DL.add(entry);
+              }).length;
+              toast(added ? added + " épisode" + (added > 1 ? "s" : "") + " ajouté" + (added > 1 ? "s" : "") + " aux téléchargements"
+                : "Cette saison est déjà téléchargée ou en cours.");
+              DL.repaint(list);
+            } }, icon("download"), "Télécharger la saison " + s));
+          }
           eps.forEach(function (e, idx) {
-            list.appendChild(h("button", { class: "episode f", "data-key": "ep-" + e.id,
+            var ep = h("button", { class: "episode f", "data-key": "ep-" + e.id,
               onclick: function () { playEpisodes(item, s, eps, idx); } },
               h("div", { class: "thumb" }, String(e.num), img(e.image)),
               h("div", null,
                 h("h3", { text: e.num + ". " + (e.title || "Épisode " + e.num) }),
                 minutes(e.duration) ? h("div", { class: "muted", text: minutes(e.duration) }) : null,
-                e.plot ? h("p", { text: e.plot }) : null)));
+                e.plot ? h("p", { text: e.plot }) : null));
+            list.appendChild(DL.available ? h("div", { class: "episode-wrap" }, ep, episodeDownloadButton(episodeDownload(item, s, e))) : ep);
           });
           Array.prototype.forEach.call(seasonsRow.children, function (b) {
             b.classList.toggle("current", Number(b.getAttribute("data-season")) === s);
@@ -904,6 +1285,81 @@
         if (season) showSeason(season);
         return [top, h("div", { class: "episodes" }, h("h2", { text: "Épisodes" }), seasonNums.length > 1 ? seasonsRow : null, list)];
       });
+      return page;
+    },
+
+    downloads: function () {
+      var page = h("div", { class: "page" }, h("h1", { class: "page-title display", text: "Téléchargements" }));
+      if (!DL.available) {
+        page.appendChild(h("p", { class: "empty", text: "Les téléchargements sont disponibles dans l'appli Android (TV ou téléphone)." }));
+        return page;
+      }
+      DL.refresh();
+      var free = window.Android.freeSpace ? window.Android.freeSpace() : 0;
+      page.appendChild(h("p", { class: "muted dl-intro", text: "Regardez vos films et épisodes sans connexion. Un téléchargement à la fois, il continue même appli fermée." +
+        (free > 0 ? "  Espace libre : " + bytes(free) + "." : "") }));
+      var listBox = h("div", { class: "dl-list" });
+      page.appendChild(listBox);
+
+      function empty() {
+        if (!listBox.querySelector(".dl-row")) {
+          listBox.innerHTML = "";
+          listBox.appendChild(h("p", { class: "empty", text: "Aucun téléchargement. Ouvrez un film ou une série et choisissez « Télécharger »." }));
+        }
+      }
+
+      DL.sorted().forEach(function (d) {
+        var status = h("div", { class: "dl-status" });
+        var bar = h("i");
+        var item = h("button", { class: "dl-item f", "data-key": "dl-" + d.key, onclick: function () {
+          var st = DL.state(d);
+          if (st.status === "done" && st.file) {
+            play({ live: false, index: 0, titles: [d.title], subtitle: d.subtitle || "", urls: [st.file] });
+          } else if (st.status === "failed" || st.status === "missing") {
+            var entry = { key: d.key, kind: d.kind, title: d.title, subtitle: d.subtitle, image: d.image, url: d.url, ext: d.ext };
+            DL.add(entry);
+            d = DL.find(entry.key);
+            toast("Nouvel essai : " + d.title);
+            item.__paint();
+          } else {
+            toast(d.title + " : " + dlLabel(d));
+          }
+        } },
+          h("div", { class: "dl-thumb", style: "background:" + gradient(d.title) }, h("span", { text: initials(d.title) }), img(d.image)),
+          h("div", { class: "dl-info" },
+            h("h3", { text: d.title }),
+            d.subtitle ? h("div", { class: "muted", text: d.subtitle }) : null,
+            status,
+            h("div", { class: "dl-bar" }, bar)));
+        var del = h("button", { class: "fav-btn dl-del f", "data-key": "dldel-" + d.key, title: "Supprimer" }, icon("trash"));
+        var row = h("div", { class: "dl-row" }, item, del);
+        del.addEventListener("click", function () {
+          // Deux appuis pour supprimer, pour éviter les fausses manœuvres à la télécommande.
+          if (!del.classList.contains("confirm")) {
+            del.classList.add("confirm");
+            toast("Appuyez encore pour supprimer « " + d.title + " »");
+            setTimeout(function () { del.classList.remove("confirm"); }, 3000);
+            return;
+          }
+          var next = row.nextElementSibling || row.previousElementSibling;
+          DL.forget(d);
+          DL.pump();
+          row.remove();
+          toast("Supprimé : " + d.title);
+          empty();
+          var target = next && next.querySelector(".dl-item");
+          focus(target || document.querySelector(".nav .current"));
+        });
+        DL.watch(item, function () {
+          var st = DL.state(d);
+          status.textContent = dlLabel(d);
+          status.className = "dl-status " + st.status;
+          bar.style.width = Math.round(dlProgress(d) * 100) + "%";
+          row.classList.toggle("done", st.status === "done");
+        });
+        listBox.appendChild(row);
+      });
+      empty();
       return page;
     },
 
@@ -976,6 +1432,14 @@
         return h("div", { class: "setting" }, h("span", { text: label }), h("span", { text: value }));
       }
 
+      function toggle(label, key, onChange) {
+        var btn = h("button", { class: "setting f", "data-key": "set-" + key }, h("span", { text: label }), h("span"));
+        function paint() { btn.lastChild.textContent = store.get(key, true) ? "Activé" : "Désactivé"; }
+        btn.addEventListener("click", function () { store.set(key, !store.get(key, true)); paint(); if (onChange) onChange(); });
+        paint();
+        return btn;
+      }
+
       return h("div", { class: "page" }, h("h1", { class: "page-title display", text: "Paramètres" }),
         h("div", { class: "settings" },
           row("Utilisateur", u.username || ""),
@@ -984,6 +1448,8 @@
           row("Connexions", u.connections || ""),
           row("Serveur", S.demo ? "Mode démo" : Xtream.creds.server),
           formatBtn,
+          toggle("Musique d'ambiance", "music", Sound.update),
+          toggle("Sons de l'interface", "sfx"),
           h("button", { class: "setting f", "data-key": "set-reload", "data-autofocus": true, onclick: function () {
             S.catalogs = {};
             toast("Catalogue rechargé");
@@ -1119,13 +1585,14 @@
     S.user = user;
     S.demo = demo;
     S.catalogs = {};
-    if (demo) store.set("demo", true); else store.remove("demo");
+    if (demo) store.set("demo", true); else { store.remove("demo"); store.set("user", user); }
     setRoot("home");
   }
 
   function logout() {
     store.remove("creds");
     store.remove("demo");
+    store.remove("user");
     S.user = null;
     S.catalogs = {};
     S.stack = [{ name: "login", params: {} }];
@@ -1135,7 +1602,7 @@
   var NS = window.NS = {
     // Appelé par la touche Retour d'Android : renvoie true si l'appli a géré le retour.
     back: function () {
-      if (webPlayer) { webPlayer.remove(); webPlayer = null; return true; }
+      if (webPlayer) { webPlayer.remove(); webPlayer = null; Sound.playing(false); return true; }
       var active = document.activeElement;
       if (S.stack.length > 1) {
         S.stack.pop();
@@ -1152,7 +1619,10 @@
       }
       return false;
     },
-    focus: function () { var el = document.activeElement; if (!el || el === document.body) focus(defaultFocus()); }
+    focus: function () { var el = document.activeElement; if (!el || el === document.body) focus(defaultFocus()); },
+    // Appelés par Android quand l'appli passe au second plan (lecteur ouvert…) puis revient.
+    pause: function () { Sound.visible(false); },
+    resume: function () { Sound.visible(true); DL.tick(); DL.repaint(); }
   };
 
   // ---------------------------------------------------------------- Démarrage
@@ -1162,10 +1632,18 @@
     if (store.get("demo", false)) { startSession(Demo.user, true); return; }
     if (!creds) { S.stack = [{ name: "login", params: {} }]; render(); return; }
     app.appendChild(h("div", { class: "loader" }));
-    Xtream.login(creds).then(function (info) { startSession(info, false); }, function () {
+    Xtream.login(creds).then(function (info) { startSession(info, false); }, function (err) {
+      // Pas d'Internet : on garde la session pour pouvoir regarder les téléchargements.
+      var offline = /joindre|Délai/.test(err.message);
+      if (offline && store.get("user", null) && DL.list.length) {
+        startSession(store.get("user", null), false);
+        setRoot("downloads");
+        toast("Pas de connexion : vos téléchargements restent disponibles.");
+        return;
+      }
       S.stack = [{ name: "login", params: {} }];
       render();
-      toast("Connexion impossible, vérifiez vos identifiants.");
+      toast(offline ? "Serveur injoignable, vérifiez votre connexion." : "Connexion impossible, vérifiez vos identifiants.");
     });
   }
 

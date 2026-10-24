@@ -18,10 +18,10 @@ button, input { font: inherit; color: inherit; }
 /* ---------- Structure ---------- */
 .shell { display: flex; height: 100vh; }
 .nav { width: 18rem; flex: none; background: var(--panel); border-right: 1px solid var(--border);
-  display: flex; flex-direction: column; padding: 2.4rem 1.4rem; gap: 0.6rem; }
-.logo { display: flex; align-items: center; gap: 0.9rem; font-size: 1.85rem; padding: 0 0.6rem 2rem; }
+  display: flex; flex-direction: column; padding: 2rem 1.4rem; gap: 0.4rem; }
+.logo { display: flex; align-items: center; gap: 0.9rem; font-size: 1.85rem; padding: 0 0.6rem 1.6rem; }
 .logo img { width: 3.2rem; height: 3.2rem; }
-.nav-item { display: flex; align-items: center; gap: 1.2rem; padding: 1rem 1.2rem; border-radius: 1rem;
+.nav-item { display: flex; align-items: center; gap: 1.2rem; padding: 0.85rem 1.2rem; border-radius: 1rem; white-space: nowrap;
   border: 0.2rem solid transparent; background: none; color: var(--text2); text-align: left; font-size: 1.5rem; }
 .nav-item svg { width: 2rem; height: 2rem; flex: none; }
 .nav-item.current { background: var(--active); color: #fff; font-weight: 700; }
@@ -31,7 +31,7 @@ button, input { font: inherit; color: inherit; }
 .account b { display: flex; align-items: center; gap: 0.6rem; font-size: 1.3rem; }
 .dot { width: 0.8rem; height: 0.8rem; border-radius: 50%; background: var(--success); display: inline-block; }
 
-.main { flex: 1; overflow-y: auto; overflow-x: hidden; position: relative; scroll-behavior: smooth; }
+.main { flex: 1; overflow-y: auto; overflow-x: hidden; position: relative; }
 .main::-webkit-scrollbar { display: none; }
 .page { padding: 3rem 3.6rem 6rem; }
 .page-title { font-size: 3rem; margin-bottom: 2rem; }
@@ -40,6 +40,7 @@ button, input { font: inherit; color: inherit; }
 .btn { display: inline-flex; align-items: center; gap: 0.8rem; padding: 1.1rem 2.2rem; border-radius: 1rem;
   border: 0.2rem solid transparent; font-weight: 700; font-size: 1.5rem; background: #fff; color: #000; }
 .btn.secondary { background: rgba(255,255,255,0.12); color: #fff; border-color: rgba(255,255,255,0.25); }
+.btn { transition: transform 0.12s ease-out; }
 .btn:focus { outline: none; box-shadow: 0 0 0 0.35rem var(--accent-light); transform: scale(1.05); }
 .btn svg { width: 1.6rem; height: 1.6rem; }
 .chip { padding: 0.8rem 1.6rem; border-radius: 99rem; background: var(--card); border: 1px solid var(--border);
@@ -60,18 +61,18 @@ button, input { font: inherit; color: inherit; }
 .section { margin-top: 3rem; }
 .section-head { display: flex; justify-content: space-between; align-items: baseline; padding: 0 3.6rem 1.2rem; }
 .section-head h2 { font-size: 2.1rem; }
-.row { display: flex; gap: 1.6rem; overflow-x: auto; padding: 1rem 3.6rem 1.6rem; scroll-behavior: smooth; }
+.row { display: flex; gap: 1.6rem; overflow-x: auto; padding: 1rem 3.6rem 1.6rem; }
 .row::-webkit-scrollbar { display: none; }
 
 /* ---------- Cartes ---------- */
 .poster { flex: none; width: 15rem; border: none; background: none; text-align: left; border-radius: 1.2rem; }
 .poster .art { position: relative; aspect-ratio: 2 / 3; border-radius: 1.2rem; overflow: hidden;
-  border: 1px solid var(--border); box-shadow: 0 0.6rem 1.6rem rgba(0,0,0,0.5); transition: transform 0.15s; }
+  border: 1px solid var(--border); transition: transform 0.15s ease-out; }
 .poster .art img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
 .poster .name { margin-top: 0.8rem; font-size: 1.15rem; font-weight: 600; color: var(--text2);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .poster:focus { outline: none; }
-.poster:focus .art { transform: scale(1.08); box-shadow: 0 0 0 0.35rem #fff, 0 1rem 3rem rgba(0,0,0,0.7); }
+.poster:focus .art { transform: scale(1.08); box-shadow: 0 0 0 0.35rem #fff; }
 .poster:focus .name { color: #fff; }
 .ph { position: absolute; inset: 0; display: flex; flex-direction: column; justify-content: flex-end;
   align-items: center; padding: 1.2rem; text-align: center; }
@@ -87,6 +88,7 @@ button, input { font: inherit; color: inherit; }
 
 .tile { flex: none; width: 16rem; height: 13rem; border-radius: 1.4rem; background: var(--card);
   border: 1px solid var(--border); padding: 1.4rem; display: flex; flex-direction: column; gap: 1rem; text-align: left; }
+.tile { transition: transform 0.12s ease-out; }
 .tile:focus { outline: none; background: var(--hover); box-shadow: 0 0 0 0.35rem #fff; transform: scale(1.05); }
 .tile .name { font-size: 1.3rem; font-weight: 600; }
 .logo-box { width: 5.4rem; height: 5.4rem; border-radius: 1rem; overflow: hidden; flex: none; position: relative;
@@ -96,7 +98,7 @@ button, input { font: inherit; color: inherit; }
 /* ---------- Colonnes (Direct, catalogues) ---------- */
 .columns { display: flex; gap: 2rem; height: calc(100vh - 11rem); }
 .col { background: var(--panel); border: 1px solid var(--border); border-radius: 1.6rem; padding: 1.4rem;
-  overflow-y: auto; scroll-behavior: smooth; }
+  overflow-y: auto; }
 .col::-webkit-scrollbar { display: none; }
 .col-head { display: flex; justify-content: space-between; color: var(--muted); font-size: 1.1rem; font-weight: 700;
   letter-spacing: 0.15em; padding: 0.4rem 0.8rem 1.2rem; }
@@ -112,7 +114,7 @@ button, input { font: inherit; color: inherit; }
 .channel:focus { outline: none; background: var(--active); border-color: var(--accent-light); }
 .badge { font-size: 0.95rem; font-weight: 800; padding: 0.3rem 0.7rem; border-radius: 0.5rem; background: var(--active); color: var(--text2); }
 .heart { color: var(--cinema); font-size: 1.6rem; }
-.catalog-body { flex: 1; overflow-y: auto; padding: 0.6rem 1rem 4rem; scroll-behavior: smooth; }
+.catalog-body { flex: 1; overflow-y: auto; padding: 0.6rem 1rem 4rem; }
 .catalog-body::-webkit-scrollbar { display: none; }
 
 /* ---------- Fiches ---------- */
@@ -270,4 +272,42 @@ button.setting:focus { outline: none; border-color: var(--accent-light); backgro
   .touch .login-card .actions .btn { justify-content: center; }
   .touch .setting { font-size: 1.4rem; padding: 1.3rem 1.4rem; }
   .touch .toast { bottom: 9rem; }
+}
+
+/* Arrivée d'un écran : léger fondu (opacité et translation seulement, peu coûteux) */
+.enter { animation: enter 0.2s ease-out; }
+@keyframes enter { from { opacity: 0; transform: translateY(1.2rem); } to { opacity: 1; transform: none; } }
+
+/* ---------- Téléchargements ---------- */
+.dl-intro { font-size: 1.3rem; margin: -0.6rem 0 2rem; max-width: 80rem; }
+.dl-list { display: flex; flex-direction: column; gap: 0.8rem; max-width: 110rem; }
+.dl-row { display: flex; gap: 0.8rem; align-items: center; }
+.dl-item { flex: 1; min-width: 0; display: flex; gap: 1.8rem; align-items: center; text-align: left; background: var(--card);
+  border: 0.2rem solid transparent; border-radius: 1.4rem; padding: 1rem; }
+.dl-item:focus { outline: none; border-color: var(--accent-light); background: var(--hover); }
+.dl-thumb { width: 7rem; aspect-ratio: 2 / 3; border-radius: 0.8rem; overflow: hidden; position: relative; flex: none;
+  display: flex; align-items: center; justify-content: center; font-weight: 900; font-size: 1.8rem; }
+.dl-thumb img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.dl-info { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 0.4rem; }
+.dl-info h3 { font-size: 1.6rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.dl-status { font-size: 1.25rem; color: var(--text2); margin-top: 0.4rem; }
+.dl-status.done { color: var(--success); font-weight: 700; }
+.dl-status.failed, .dl-status.missing { color: #fca5a5; }
+.dl-bar { height: 0.5rem; border-radius: 99rem; background: var(--active); overflow: hidden; margin-top: 0.4rem; }
+.dl-bar i { display: block; height: 100%; width: 0; background: var(--accent); transition: width 0.4s; }
+.dl-row.done .dl-bar { display: none; }
+.dl-del svg, .dl-mini svg { width: 2rem; height: 2rem; }
+.dl-del { display: flex; align-items: center; justify-content: center; }
+.dl-del.confirm { background: #7f1d1d; color: #fff; }
+.episode-wrap { display: flex; gap: 0.8rem; align-items: center; margin-bottom: 0.6rem; }
+.episode-wrap .episode { flex: 1; min-width: 0; margin-bottom: 0; }
+.dl-mini { display: flex; align-items: center; justify-content: center; }
+.dl-mini.on { color: var(--success); }
+.dl-mini .pct { font-size: 1.1rem; font-weight: 800; color: var(--accent-light); }
+.season-dl { display: inline-flex; align-items: center; gap: 0.8rem; margin-bottom: 1.4rem; }
+.season-dl svg { width: 1.6rem; height: 1.6rem; }
+@media (max-width: 1000px), (orientation: portrait) {
+  .touch .dl-thumb { width: 5.6rem; }
+  .touch .dl-item { gap: 1.2rem; padding: 0.8rem; }
+  .touch .dl-info h3 { font-size: 1.4rem; }
 }

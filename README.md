@@ -6,7 +6,10 @@ Version **Android** de NovaStream, l'appli IPTV Xtream Codes. Un seul APK pour :
 - **téléphones et tablettes Android** : interface tactile avec barre d'onglets en bas, portrait ou paysage.
 
 - Connexion Xtream Codes (ou **mode démo** pour essayer sans abonnement).
-- Accueil, **En direct** (catégories + chaînes), **Films**, **Séries** (saisons, épisodes), **Ma liste**, **Recherche**, **Paramètres**.
+- Accueil, **En direct** (catégories + chaînes), **Films**, **Séries** (saisons, épisodes), **Ma liste**, **Téléchargés**, **Recherche**, **Paramètres**.
+- **Téléchargements** : un film, un épisode ou une saison entière, à regarder sans connexion (un à la fois, continue appli fermée ;
+  les fichiers sont effacés si l'appli est désinstallée).
+- Sons de la version Windows : musique d'ambiance douce, clics et transitions (désactivables dans Paramètres).
 - Lecteur **ExoPlayer** : HLS (.m3u8), MPEG-TS (.ts), MP4, MKV ; sous-titres et pistes audio.
 - Direct : **haut / bas** (ou CH+ / CH−) pour zapper. Séries : l'épisode suivant s'enchaîne.
 - Si un flux ne passe pas : « Ouvrir avec un autre lecteur » (VLC, MX Player…).
@@ -43,9 +46,10 @@ Sur la TV, refais simplement le code dans Downloader : la nouvelle version rempl
 
 ```text
 app/src/main/
-├── assets/web/        # Interface TV (HTML/CSS/JS) : écrans, navigation télécommande, client Xtream
+├── assets/web/        # Interface TV (HTML/CSS/JS) : écrans, navigation télécommande, client Xtream, sons (audio/)
 ├── java/…/MainActivity.java    # WebView + requêtes HTTP vers le serveur IPTV
-├── java/…/PlayerActivity.java  # Lecteur plein écran ExoPlayer (Media3)
+├── java/…/PlayerActivity.java  # Lecteur plein écran ExoPlayer (Media3), en ligne ou fichier téléchargé
+├── java/…/Downloads.java       # Téléchargements via le DownloadManager d'Android
 └── res/               # Icône et bannière Android TV
 ```
 
