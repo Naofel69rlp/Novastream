@@ -146,8 +146,22 @@ public class MainActivity extends Activity {
             return error(400, "Adresse invalide.");
         }
         try {
-            HttpURLConnection c = open(target);
+            HttpURLConnection c = open(target, UserAgents.index(this));
             int status = c.getResponseCode();
+            // Serveur qui refuse l'identifiant du lecteur : on essaie les autres et on retient celui qui passe.
+            if (status == 401 || status == 403 || status == 406) {
+                int first = UserAgents.index(this);
+                for (int k = 1; k < UserAgents.ALL.length; k++) {
+                    int i = (first + k) % UserAgents.ALL.length;
+                    c.disconnect();
+                    c = open(target, i);
+                    status = c.getResponseCode();
+                    if (status < 400) {
+                        UserAgents.remember(this, i);
+                        break;
+                    }
+                }
+            }
             if (status < 200 || (status >= 300 && status < 400) || status > 599) {
                 return error(502, "Réponse inattendue du serveur (HTTP " + status + ").");
             }
@@ -157,6 +171,12 @@ public class MainActivity extends Activity {
             return new WebResourceResponse("application/json", "utf-8", status, status < 300 ? "OK" : "Error", headers(), in);
         } catch (SocketTimeoutException e) {
             return error(504, "Délai de connexion dépassé. Le serveur ne répond pas.");
+        } catch (java.net.UnknownHostException e) {
+            return error(502, "Adresse du serveur introuvable. Vérifiez l'URL : votre fournisseur l'a peut-être changée.");
+        } catch (java.net.ConnectException e) {
+            return error(502, "Le serveur refuse la connexion (serveur en panne ou port incorrect dans l'URL).");
+        } catch (javax.net.ssl.SSLException e) {
+            return error(502, "Connexion sécurisée impossible (certificat HTTPS). Essayez l'URL en http://.");
         } catch (IOException | RuntimeException e) {
             return error(502, "Impossible de joindre le serveur. Vérifiez l'URL ou votre connexion.");
         }
@@ -189,13 +209,13 @@ public class MainActivity extends Activity {
     }
 
     /** Requête GET qui suit aussi les redirections http ↔ https (que HttpURLConnection ignore). */
-    private HttpURLConnection open(String address) throws IOException {
+    private HttpURLConnection open(String address, int ua) throws IOException {
         for (int hops = 0; hops < 5; hops++) {
             HttpURLConnection c = (HttpURLConnection) new URL(address).openConnection();
             c.setConnectTimeout(12000);
             c.setReadTimeout(45000);
             c.setInstanceFollowRedirects(false);
-            c.setRequestProperty("User-Agent", UserAgents.current(this));
+            c.setRequestProperty("User-Agent", UserAgents.ALL[ua]);
             c.setRequestProperty("Accept", "application/json, */*");
             int code = c.getResponseCode();
             if (code >= 300 && code < 400 && c.getHeaderField("Location") != null) {
