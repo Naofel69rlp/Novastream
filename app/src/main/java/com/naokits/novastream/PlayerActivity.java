@@ -202,16 +202,27 @@ public class PlayerActivity extends Activity {
         dubber = new Dubber(this, player, dubSubtitle, new Dubber.Listener() {
             @Override
             public void onStatus(String text) {
-                dubStatus.setText(text == null ? "" : text);
-                dubStatus.setVisibility(text == null ? View.GONE : View.VISIBLE);
+                if (text == null) {
+                    if (dubStatus.getTag() == null) dubStatus.setVisibility(View.GONE);
+                    return;
+                }
+                dubStatus.setTag(null);
+                dubStatus.setText(text);
+                dubStatus.setVisibility(View.VISIBLE);
             }
 
             @Override
             public void onFatal(String message) {
-                Toast.makeText(PlayerActivity.this, message, Toast.LENGTH_LONG).show();
+                showDubInfo("Voix française arrêtée : " + message);
+            }
+
+            @Override
+            public void onInfo(String message) {
+                showDubInfo(message);
             }
         });
         dubPending = !live && intent.getBooleanExtra(EXTRA_DUB, false);
+        if (dubPending) showDubInfo("Voix française demandée : démarrage dès que la vidéo commence…");
 
         // Préférences choisies dans Paramètres.
         resizeIndex = Math.max(0, java.util.Arrays.asList(RESIZE_KEYS).indexOf(intent.getStringExtra(EXTRA_RESIZE)));
@@ -386,6 +397,20 @@ public class PlayerActivity extends Activity {
                 .show();
     }
 
+    private final Runnable hideDubInfo = () -> {
+        if (dubber == null || !dubber.isActive() || dubStatus.getTag() != null) dubStatus.setVisibility(View.GONE);
+        dubStatus.setTag(null);
+    };
+
+    /** Message de la voix française affiché 8 secondes au centre de l'écran. */
+    private void showDubInfo(String message) {
+        dubStatus.setText(message);
+        dubStatus.setTag("info");
+        dubStatus.setVisibility(View.VISIBLE);
+        handler.removeCallbacks(hideDubInfo);
+        handler.postDelayed(hideDubInfo, 8000);
+    }
+
     /** Lance la voix française sur la vidéo en cours, dans la langue de la piste audio choisie. */
     private void startDub() {
         String lang = null;
@@ -395,11 +420,11 @@ public class PlayerActivity extends Activity {
                 if (g.isTrackSelected(i)) lang = g.getTrackFormat(i).language;
             }
         }
-        if (lang != null && lang.startsWith("fr")) {
-            Toast.makeText(this, "Cette vidéo est déjà en français.", Toast.LENGTH_LONG).show();
-            return;
-        }
+        // Les étiquettes de langue des fichiers IPTV sont souvent fausses : on laisse l'IA détecter la langue
+        // et on ne passe jamais un « fr » douteux, sinon le doublage serait sauté sans rien dire.
+        if (lang != null && (lang.startsWith("fr") || lang.equals("und") || lang.isEmpty())) lang = null;
         dubber.start(urls[player.getCurrentMediaItemIndex()], lang);
+        if (dubber.isActive()) showDubInfo("Voix française activée : préparation des 3 premières minutes…");
     }
 
     private void chooseResize() {

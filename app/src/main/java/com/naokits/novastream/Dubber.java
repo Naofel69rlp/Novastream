@@ -55,6 +55,8 @@ final class Dubber {
         void onStatus(String text);
         /** Erreur définitive : la voix française s'arrête. */
         void onFatal(String message);
+        /** Information à afficher quelques secondes. */
+        void onInfo(String message);
     }
 
     static final String PREFS = "novastream";
@@ -62,7 +64,9 @@ final class Dubber {
 
     private static final long CHUNK_MS = 180_000;
     private static final int RATE = 16_000;
-    private static final float DUCKED = 0.2f;
+    private static final float DUCKED = 0.03f;
+    /** La voix de synthèse met un peu de temps à démarrer : on lance chaque réplique un peu en avance. */
+    private static final long LEAD_MS = 400;
 
     private final Context ctx;
     private final ExoPlayer player;
@@ -79,11 +83,13 @@ final class Dubber {
     private volatile long duration;
     private String url;
     private String audioLang;
+    private float currentVolume = 1f;
     private long spokenUpTo;
     private long lastTick;
     private boolean waiting;
     private int utterance;
     private Thread worker;
+    private volatile String stage = "";
 
     private final Runnable tick = this::tick;
 
@@ -129,16 +135,18 @@ final class Dubber {
         lastTick = position;
         if (tts == null) {
             tts = new TextToSpeech(ctx, status -> {
-                ttsOk = status == TextToSpeech.SUCCESS
-                        && tts.setLanguage(Locale.FRENCH) >= TextToSpeech.LANG_AVAILABLE;
+                int lang = status == TextToSpeech.SUCCESS ? tts.setLanguage(Locale.FRANCE) : TextToSpeech.ERROR;
+                if (lang < TextToSpeech.LANG_AVAILABLE && status == TextToSpeech.SUCCESS) lang = tts.setLanguage(Locale.FRENCH);
+                ttsOk = lang >= TextToSpeech.LANG_AVAILABLE;
                 if (!ttsOk) {
-                    listener.onStatus("Pas de voix française sur cet appareil : traduction affichée en sous-titres.");
+                    listener.onInfo("Pas de voix française installée sur cet appareil : les répliques s'affichent en sous-titres. "
+                            + "Pour la voix : Paramètres Android › Accessibilité › Synthèse vocale › installez le français.");
                 }
             });
             tts.setOnUtteranceProgressListener(new UtteranceProgressListener() {
                 @Override public void onStart(String id) {}
-                @Override public void onDone(String id) { main.post(() -> unduck(id)); }
-                @Override public void onError(String id) { main.post(() -> unduck(id)); }
+                @Override public void onDone(String id) {}
+                @Override public void onError(String id) {}
             });
         }
         worker = new Thread(this::work, "voix-francaise");
@@ -152,7 +160,7 @@ final class Dubber {
         if (worker != null) worker.interrupt();
         worker = null;
         if (tts != null) tts.stop();
-        if (player != null) player.setVolume(1f);
+        if (player != null) { player.setVolume(1f); currentVolume = 1f; }
         subtitleView.setVisibility(View.GONE);
         if (waiting && player != null) player.play();
         waiting = false;
@@ -175,7 +183,7 @@ final class Dubber {
         if (Math.abs(pos - lastTick) > 2500) {  // l'utilisateur a avancé ou reculé
             spokenUpTo = pos - 1;
             if (tts != null) tts.stop();
-            player.setVolume(1f);
+            { player.setVolume(1f); currentVolume = 1f; }
         }
         lastTick = pos;
 
@@ -188,7 +196,7 @@ final class Dubber {
                 player.pause();
                 waiting = true;
             }
-            listener.onStatus("Préparation de la voix française…");
+            listener.onStatus("Préparation de la voix française…" + (stage.isEmpty() ? "" : "\n" + stage));
         } else if (waiting) {
             waiting = false;
             listener.onStatus(null);
@@ -200,14 +208,14 @@ final class Dubber {
             synchronized (lines) {
                 next = lines.higherEntry(spokenUpTo);
             }
-            if (next != null && next.getKey() <= pos) {
+            if (next != null && next.getKey() <= pos + LEAD_MS) {
                 spokenUpTo = next.getKey();
                 if (pos - next.getKey() < 1500) say(next.getKey(), next.getValue());
             }
         } else if (tts != null && tts.isSpeaking()) {
             tts.stop();
-            player.setVolume(1f);
         }
+        duck(pos);
         main.postDelayed(tick, 100);
     }
 
@@ -221,14 +229,29 @@ final class Dubber {
                 Math.max(1500, end - start + 600));
         if (!ttsOk || tts == null) return;
         double seconds = Math.max(0.8, (end - start) / 1000.0);
-        float rate = (float) Math.max(0.95, Math.min(1.7, text.length() / (seconds * 15.0)));
+        float rate = (float) Math.max(1.0, Math.min(2.0, text.length() / (seconds * 13.0)));
         tts.setSpeechRate(rate);
-        player.setVolume(DUCKED);
         tts.speak(text, TextToSpeech.QUEUE_FLUSH, new Bundle(), String.valueOf(id));
     }
 
-    private void unduck(String id) {
-        if (String.valueOf(utterance).equals(id) && player != null) player.setVolume(1f);
+    /**
+     * Baisse la voix d'origine pendant toute la durée de chaque réplique (et tant que la voix française parle),
+     * pas seulement pendant la synthèse : sinon la voix italienne reste audible derrière.
+     */
+    private void duck(long pos) {
+        boolean inLine = false;
+        if (player.isPlaying()) {
+            synchronized (lines) {
+                Map.Entry<Long, String[]> cur = lines.floorEntry(pos + LEAD_MS);
+                inLine = cur != null && pos <= Long.parseLong(cur.getValue()[0]) + 300;
+            }
+            if (!inLine && ttsOk && tts != null && tts.isSpeaking()) inLine = true;
+        }
+        float volume = inLine ? DUCKED : 1f;
+        if (volume != currentVolume) {
+            currentVolume = volume;
+            player.setVolume(volume);
+        }
     }
 
     // ---------------------------------------------------------------- Préparation des morceaux
@@ -258,6 +281,7 @@ final class Dubber {
                 return;
             } catch (Exception e) {
                 if (!active) return;
+                stage = "nouvel essai après une erreur : " + e.getMessage();
                 if (++failures >= 3) {
                     fail("La voix française a échoué : " + e.getMessage());
                     return;
@@ -273,8 +297,19 @@ final class Dubber {
         if (cache.exists()) {
             result = new JSONArray(readText(cache));
         } else {
+            stage = "1/3 · lecture du son du film";
             byte[] wav = extractWav(chunk * CHUNK_MS * 1000, (chunk + 1) * CHUNK_MS * 1000);
-            result = wav == null ? new JSONArray() : translate(transcribe(wav), chunk * CHUNK_MS);
+            stage = "2/3 · transcription";
+            JSONObject transcript = wav == null ? null : transcribe(wav);
+            stage = "3/3 · traduction";
+            result = transcript == null ? new JSONArray() : translate(transcript, chunk * CHUNK_MS);
+            stage = "";
+            if (result.length() == 0 && transcript != null && "french".equalsIgnoreCase(transcript.optString("language"))) {
+                main.post(() -> listener.onInfo("Ce passage est déjà en français."));
+            } else if (chunk == position / CHUNK_MS) {
+                final int n = result.length();
+                main.post(() -> listener.onInfo("Voix française prête (" + n + " répliques pour ces 3 minutes)."));
+            }
             writeText(cache, result.toString());
         }
         synchronized (lines) {
@@ -325,6 +360,12 @@ final class Dubber {
             if (track < 0) throw new FatalException("Ce film n'a pas de piste son lisible.");
             ex.selectTrack(track);
             MediaFormat format = ex.getTrackFormat(track);
+            // Certains fichiers (MPEG-TS, MP4 avec décalage) ne commencent pas à 0 : le lecteur, lui, part de 0.
+            // Sans cette correction toutes les répliques arrivent en retard (ou en avance) du même écart.
+            ex.seekTo(0, MediaExtractor.SEEK_TO_PREVIOUS_SYNC);
+            long base = Math.max(0, ex.getSampleTime());
+            startUs += base;
+            endUs += base;
             ex.seekTo(startUs, MediaExtractor.SEEK_TO_PREVIOUS_SYNC);
             try {
                 dec = MediaCodec.createDecoderByType(format.getString(MediaFormat.KEY_MIME));
@@ -547,7 +588,7 @@ final class Dubber {
 
     private File cacheFile(long chunk) throws Exception {
         MessageDigest md = MessageDigest.getInstance("SHA-1");
-        byte[] d = md.digest((url + "|" + audioLang).getBytes(StandardCharsets.UTF_8));
+        byte[] d = md.digest(("v2|" + url + "|" + audioLang).getBytes(StandardCharsets.UTF_8));
         StringBuilder hex = new StringBuilder();
         for (int i = 0; i < 8; i++) hex.append(String.format(Locale.ROOT, "%02x", d[i]));
         File dir = new File(ctx.getCacheDir(), "voix-fr");
