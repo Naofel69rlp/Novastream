@@ -113,7 +113,7 @@ final class KeyServer {
                 + "input,button{width:100%;box-sizing:border-box;font-size:17px;padding:14px;border-radius:12px;border:1px solid #333;margin-top:12px}"
                 + "input{background:#16161f;color:#fff}button{background:#3b82f6;color:#fff;border:0;font-weight:700}"
                 + "p{color:#a1a1aa;line-height:1.5}.m{color:#fff;font-weight:700}</style></head><body>"
-                + "<h2>NovaStream · Voix française</h2>"
+                + "<h2>NovaStream · Sous-titres français (IA)</h2>"
                 + (message != null ? "<p class=m>" + message + "</p>" : "")
                 + "<p>Collez votre clé OpenAI (elle commence par « sk- »). Elle est envoyée directement à la TV, sur votre Wi-Fi.</p>"
                 + "<form method=post><input name=key placeholder='sk-…' autocomplete=off autocapitalize=off>"

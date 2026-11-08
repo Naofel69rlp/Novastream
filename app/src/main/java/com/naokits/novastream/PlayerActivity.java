@@ -213,7 +213,7 @@ public class PlayerActivity extends Activity {
 
             @Override
             public void onFatal(String message) {
-                showDubInfo("Voix française arrêtée : " + message);
+                showDubInfo("Sous-titres français arrêtés : " + message);
             }
 
             @Override
@@ -222,7 +222,7 @@ public class PlayerActivity extends Activity {
             }
         });
         dubPending = !live && intent.getBooleanExtra(EXTRA_DUB, false);
-        if (dubPending) showDubInfo("Voix française demandée : démarrage dès que la vidéo commence…");
+        if (dubPending) showDubInfo("Sous-titres français demandés : démarrage dès que la vidéo commence…");
 
         // Préférences choisies dans Paramètres.
         resizeIndex = Math.max(0, java.util.Arrays.asList(RESIZE_KEYS).indexOf(intent.getStringExtra(EXTRA_RESIZE)));
@@ -384,7 +384,7 @@ public class PlayerActivity extends Activity {
         rows.add("Langue audio : " + selectedLabel(C.TRACK_TYPE_AUDIO, "Automatique"));
         rows.add("Sous-titres : " + selectedLabel(C.TRACK_TYPE_TEXT, "Désactivés"));
         rows.add("Format de l'image : " + RESIZE_LABELS[resizeIndex]);
-        if (!live) rows.add("Voix française (IA) : " + (dubber.isActive() ? "activée" : "désactivée"));
+        if (!live) rows.add("Sous-titres français (IA) : " + (dubber.isActive() ? "activée" : "désactivée"));
         new AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
                 .setTitle("Options de lecture")
                 .setItems(rows.toArray(new String[0]), (d, which) -> {
@@ -424,7 +424,7 @@ public class PlayerActivity extends Activity {
         // et on ne passe jamais un « fr » douteux, sinon le doublage serait sauté sans rien dire.
         if (lang != null && (lang.startsWith("fr") || lang.equals("und") || lang.isEmpty())) lang = null;
         dubber.start(urls[player.getCurrentMediaItemIndex()], lang);
-        if (dubber.isActive()) showDubInfo("Voix française activée : préparation des 3 premières minutes…");
+        if (dubber.isActive()) showDubInfo("Sous-titres français activés : préparation des 3 premières minutes…");
     }
 
     private void chooseResize() {

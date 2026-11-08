@@ -119,7 +119,7 @@ final class Dubber {
     void start(String url, String audioLang) {
         stop();
         if (key(ctx).isEmpty()) {
-            listener.onFatal("Ajoutez d'abord votre clé OpenAI dans Paramètres › Voix française.");
+            listener.onFatal("Ajoutez d'abord votre clé OpenAI dans Paramètres › Sous-titres français (IA).");
             return;
         }
         this.url = url;
@@ -133,22 +133,6 @@ final class Dubber {
         duration = player.getDuration();
         spokenUpTo = position - 1;
         lastTick = position;
-        if (tts == null) {
-            tts = new TextToSpeech(ctx, status -> {
-                int lang = status == TextToSpeech.SUCCESS ? tts.setLanguage(Locale.FRANCE) : TextToSpeech.ERROR;
-                if (lang < TextToSpeech.LANG_AVAILABLE && status == TextToSpeech.SUCCESS) lang = tts.setLanguage(Locale.FRENCH);
-                ttsOk = lang >= TextToSpeech.LANG_AVAILABLE;
-                if (!ttsOk) {
-                    listener.onInfo("Pas de voix française installée sur cet appareil : les répliques s'affichent en sous-titres. "
-                            + "Pour la voix : Paramètres Android › Accessibilité › Synthèse vocale › installez le français.");
-                }
-            });
-            tts.setOnUtteranceProgressListener(new UtteranceProgressListener() {
-                @Override public void onStart(String id) {}
-                @Override public void onDone(String id) {}
-                @Override public void onError(String id) {}
-            });
-        }
         worker = new Thread(this::work, "voix-francaise");
         worker.start();
         main.post(tick);
@@ -182,8 +166,6 @@ final class Dubber {
         if (duration <= 0) duration = player.getDuration();
         if (Math.abs(pos - lastTick) > 2500) {  // l'utilisateur a avancé ou reculé
             spokenUpTo = pos - 1;
-            if (tts != null) tts.stop();
-            { player.setVolume(1f); currentVolume = 1f; }
         }
         lastTick = pos;
 
@@ -196,62 +178,30 @@ final class Dubber {
                 player.pause();
                 waiting = true;
             }
-            listener.onStatus("Préparation de la voix française…" + (stage.isEmpty() ? "" : "\n" + stage));
+            listener.onStatus("Préparation des sous-titres français…" + (stage.isEmpty() ? "" : "\n" + stage));
         } else if (waiting) {
             waiting = false;
             listener.onStatus(null);
             player.play();
         }
 
-        if (player.isPlaying()) {
-            Map.Entry<Long, String[]> next;
-            synchronized (lines) {
-                next = lines.higherEntry(spokenUpTo);
-            }
-            if (next != null && next.getKey() <= pos + LEAD_MS) {
-                spokenUpTo = next.getKey();
-                if (pos - next.getKey() < 1500) say(next.getKey(), next.getValue());
-            }
-        } else if (tts != null && tts.isSpeaking()) {
-            tts.stop();
-        }
-        duck(pos);
+        showLine(pos);
         main.postDelayed(tick, 100);
     }
 
-    private void say(long start, String[] line) {
-        long end = Long.parseLong(line[0]);
-        String text = line[1];
-        subtitleView.setText(text);
-        subtitleView.setVisibility(View.VISIBLE);
-        final int id = ++utterance;
-        main.postDelayed(() -> { if (utterance == id) subtitleView.setVisibility(View.GONE); },
-                Math.max(1500, end - start + 600));
-        if (!ttsOk || tts == null) return;
-        double seconds = Math.max(0.8, (end - start) / 1000.0);
-        float rate = (float) Math.max(1.0, Math.min(2.0, text.length() / (seconds * 13.0)));
-        tts.setSpeechRate(rate);
-        tts.speak(text, TextToSpeech.QUEUE_FLUSH, new Bundle(), String.valueOf(id));
-    }
-
-    /**
-     * Baisse la voix d'origine pendant toute la durée de chaque réplique (et tant que la voix française parle),
-     * pas seulement pendant la synthèse : sinon la voix italienne reste audible derrière.
-     */
-    private void duck(long pos) {
-        boolean inLine = false;
-        if (player.isPlaying()) {
-            synchronized (lines) {
-                Map.Entry<Long, String[]> cur = lines.floorEntry(pos + LEAD_MS);
-                inLine = cur != null && pos <= Long.parseLong(cur.getValue()[0]) + 300;
-            }
-            if (!inLine && ttsOk && tts != null && tts.isSpeaking()) inLine = true;
+    /** Affiche la réplique traduite exactement pendant qu'elle est prononcée dans le film. */
+    private void showLine(long pos) {
+        String text = null;
+        synchronized (lines) {
+            Map.Entry<Long, String[]> cur = lines.floorEntry(pos);
+            if (cur != null && pos <= Long.parseLong(cur.getValue()[0]) + 400) text = cur.getValue()[1];
         }
-        float volume = inLine ? DUCKED : 1f;
-        if (volume != currentVolume) {
-            currentVolume = volume;
-            player.setVolume(volume);
+        if (text == null) {
+            if (subtitleView.getVisibility() != View.GONE) subtitleView.setVisibility(View.GONE);
+            return;
         }
+        if (!text.contentEquals(subtitleView.getText())) subtitleView.setText(text);
+        if (subtitleView.getVisibility() != View.VISIBLE) subtitleView.setVisibility(View.VISIBLE);
     }
 
     // ---------------------------------------------------------------- Préparation des morceaux
@@ -283,7 +233,7 @@ final class Dubber {
                 if (!active) return;
                 stage = "nouvel essai après une erreur : " + e.getMessage();
                 if (++failures >= 3) {
-                    fail("La voix française a échoué : " + e.getMessage());
+                    fail("Les sous-titres français ont échoué : " + e.getMessage());
                     return;
                 }
                 sleep(2000);
@@ -308,7 +258,7 @@ final class Dubber {
                 main.post(() -> listener.onInfo("Ce passage est déjà en français."));
             } else if (chunk == position / CHUNK_MS) {
                 final int n = result.length();
-                main.post(() -> listener.onInfo("Voix française prête (" + n + " répliques pour ces 3 minutes)."));
+                main.post(() -> listener.onInfo("Sous-titres français prêts (" + n + " répliques pour ces 3 minutes)."));
             }
             writeText(cache, result.toString());
         }
@@ -343,7 +293,7 @@ final class Dubber {
                 }
             } catch (IOException e) {
                 throw new FatalException("Le son du film ne peut pas être lu en parallèle de la vidéo (votre abonnement "
-                        + "n'autorise peut-être qu'une connexion). Téléchargez le film, puis activez la voix française.");
+                        + "n'autorise peut-être qu'une connexion). Téléchargez le film, puis activez les sous-titres français.");
             }
             int track = -1;
             for (int i = 0; i < ex.getTrackCount(); i++) {
@@ -570,7 +520,7 @@ final class Dubber {
         InputStream in = code >= 400 ? c.getErrorStream() : c.getInputStream();
         String text = in == null ? "" : readAll(in);
         c.disconnect();
-        if (code == 401) throw new FatalException("Clé OpenAI refusée : vérifiez-la dans Paramètres › Voix française.");
+        if (code == 401) throw new FatalException("Clé OpenAI refusée : vérifiez-la dans Paramètres › Sous-titres français (IA).");
         if (code == 429) throw new FatalException("Crédit OpenAI épuisé ou limite atteinte (platform.openai.com › Billing).");
         if (code >= 400) {
             String message = "erreur " + code;
