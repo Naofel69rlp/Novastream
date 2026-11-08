@@ -62,6 +62,7 @@ public class PlayerActivity extends Activity {
     static final String EXTRA_SUB_LANG = "subLang";
     static final String EXTRA_RESIZE = "resize";
     static final String EXTRA_ALTS = "alts";
+    static final String EXTRA_DUB = "dub";
 
     private static final String[] RESIZE_KEYS = {"fit", "zoom", "fill"};
     private static final String[] RESIZE_LABELS = {"Adapté à l'écran", "Plein écran (zoom)", "Étiré"};
@@ -79,6 +80,10 @@ public class PlayerActivity extends Activity {
     private String[] primaryUrls;
     private String[][] alts;
     private int[] altUsed;
+    private Dubber dubber;
+    private TextView dubSubtitle;
+    private TextView dubStatus;
+    private boolean dubPending;
     private LinearLayout errorPanel;
     private TextView errorText;
     private String[] urls;
@@ -129,6 +134,29 @@ public class PlayerActivity extends Activity {
         bannerParams.setMargins(dp(40), dp(32), dp(40), 0);
         root.addView(banner, bannerParams);
 
+        // Voix française : réplique traduite en bas, état de la préparation en haut.
+        dubSubtitle = new TextView(this);
+        dubSubtitle.setTextColor(Color.WHITE);
+        dubSubtitle.setTextSize(TypedValue.COMPLEX_UNIT_SP, 22);
+        dubSubtitle.setGravity(Gravity.CENTER);
+        dubSubtitle.setShadowLayer(6, 0, 2, Color.BLACK);
+        dubSubtitle.setPadding(dp(18), dp(8), dp(18), dp(8));
+        dubSubtitle.setBackground(rounded(0x99000000, 10));
+        dubSubtitle.setVisibility(View.GONE);
+        FrameLayout.LayoutParams subParams = new FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        subParams.gravity = Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL;
+        subParams.setMargins(dp(60), 0, dp(60), dp(70));
+        root.addView(dubSubtitle, subParams);
+        dubStatus = new TextView(this);
+        dubStatus.setTextColor(Color.WHITE);
+        dubStatus.setTextSize(TypedValue.COMPLEX_UNIT_SP, 18);
+        dubStatus.setPadding(dp(20), dp(12), dp(20), dp(12));
+        dubStatus.setBackground(rounded(0xE6262638, 12));
+        dubStatus.setVisibility(View.GONE);
+        FrameLayout.LayoutParams statusParams = new FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        statusParams.gravity = Gravity.CENTER;
+        root.addView(dubStatus, statusParams);
+
         // Bouton « Langue · Sous-titres · Format », visible avec les commandes du lecteur.
         optionsButton = new TextView(this);
         optionsButton.setText("Langue · Sous-titres · Format");
@@ -171,6 +199,19 @@ public class PlayerActivity extends Activity {
                 .setSeekForwardIncrementMs(30000)
                 .build();
         playerView.setPlayer(player);
+        dubber = new Dubber(this, player, dubSubtitle, new Dubber.Listener() {
+            @Override
+            public void onStatus(String text) {
+                dubStatus.setText(text == null ? "" : text);
+                dubStatus.setVisibility(text == null ? View.GONE : View.VISIBLE);
+            }
+
+            @Override
+            public void onFatal(String message) {
+                Toast.makeText(PlayerActivity.this, message, Toast.LENGTH_LONG).show();
+            }
+        });
+        dubPending = !live && intent.getBooleanExtra(EXTRA_DUB, false);
 
         // Préférences choisies dans Paramètres.
         resizeIndex = Math.max(0, java.util.Arrays.asList(RESIZE_KEYS).indexOf(intent.getStringExtra(EXTRA_RESIZE)));
@@ -191,6 +232,10 @@ public class PlayerActivity extends Activity {
             public void onMediaItemTransition(MediaItem mediaItem, int reason) {
                 hideError();
                 showBanner();
+                if (dubber != null && dubber.isActive()) {
+                    dubber.stop();
+                    dubPending = true;
+                }
             }
 
             @Override
@@ -231,6 +276,10 @@ public class PlayerActivity extends Activity {
                 if (state == Player.STATE_READY) {
                     UserAgents.remember(PlayerActivity.this, uaIndex);
                     uaTries = 0;
+                    if (dubPending) {
+                        dubPending = false;
+                        startDub();
+                    }
                 }
             }
         });
@@ -320,19 +369,37 @@ public class PlayerActivity extends Activity {
 
     /** Menu des options de la vidéo en cours : langue audio, sous-titres, format de l'image. */
     private void showOptions() {
-        String[] rows = {
-                "Langue audio : " + selectedLabel(C.TRACK_TYPE_AUDIO, "Automatique"),
-                "Sous-titres : " + selectedLabel(C.TRACK_TYPE_TEXT, "Désactivés"),
-                "Format de l'image : " + RESIZE_LABELS[resizeIndex]
-        };
+        List<String> rows = new ArrayList<>();
+        rows.add("Langue audio : " + selectedLabel(C.TRACK_TYPE_AUDIO, "Automatique"));
+        rows.add("Sous-titres : " + selectedLabel(C.TRACK_TYPE_TEXT, "Désactivés"));
+        rows.add("Format de l'image : " + RESIZE_LABELS[resizeIndex]);
+        if (!live) rows.add("Voix française (IA) : " + (dubber.isActive() ? "activée" : "désactivée"));
         new AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
                 .setTitle("Options de lecture")
-                .setItems(rows, (d, which) -> {
+                .setItems(rows.toArray(new String[0]), (d, which) -> {
                     if (which == 0) chooseTrack(C.TRACK_TYPE_AUDIO);
                     else if (which == 1) chooseTrack(C.TRACK_TYPE_TEXT);
-                    else chooseResize();
+                    else if (which == 2) chooseResize();
+                    else if (dubber.isActive()) dubber.stop();
+                    else startDub();
                 })
                 .show();
+    }
+
+    /** Lance la voix française sur la vidéo en cours, dans la langue de la piste audio choisie. */
+    private void startDub() {
+        String lang = null;
+        for (Tracks.Group g : player.getCurrentTracks().getGroups()) {
+            if (g.getType() != C.TRACK_TYPE_AUDIO) continue;
+            for (int i = 0; i < g.length; i++) {
+                if (g.isTrackSelected(i)) lang = g.getTrackFormat(i).language;
+            }
+        }
+        if (lang != null && lang.startsWith("fr")) {
+            Toast.makeText(this, "Cette vidéo est déjà en français.", Toast.LENGTH_LONG).show();
+            return;
+        }
+        dubber.start(urls[player.getCurrentMediaItemIndex()], lang);
     }
 
     private void chooseResize() {
@@ -628,6 +695,7 @@ public class PlayerActivity extends Activity {
     @Override
     protected void onDestroy() {
         handler.removeCallbacksAndMessages(null);
+        if (dubber != null) dubber.release();
         if (player != null) {
             player.release();
             player = null;

@@ -252,6 +252,7 @@ public class MainActivity extends Activity {
                 intent.putExtra(PlayerActivity.EXTRA_AUDIO_LANG, o.optString("audioLang", ""));
                 intent.putExtra(PlayerActivity.EXTRA_SUB_LANG, o.optString("subLang", "off"));
                 intent.putExtra(PlayerActivity.EXTRA_RESIZE, o.optString("resize", "fit"));
+                intent.putExtra(PlayerActivity.EXTRA_DUB, o.optBoolean("dub", false));
                 JSONArray alts = o.optJSONArray("alts");
                 if (alts != null) intent.putExtra(PlayerActivity.EXTRA_ALTS, alts.toString());
                 runOnUiThread(() -> startActivity(intent));
@@ -279,6 +280,28 @@ public class MainActivity extends Activity {
         @JavascriptInterface
         public double freeSpace() {
             return Downloads.freeSpace(MainActivity.this);
+        }
+
+        /** Clé OpenAI de la voix française (gardée dans l'appli, jamais renvoyée à l'interface). */
+        @JavascriptInterface
+        public boolean hasOpenAiKey() {
+            return !Dubber.key(MainActivity.this).isEmpty();
+        }
+
+        @JavascriptInterface
+        public void setOpenAiKey(String key) {
+            Dubber.saveKey(MainActivity.this, key);
+        }
+
+        /** Page web locale pour coller la clé depuis un téléphone ; renvoie son adresse. */
+        @JavascriptInterface
+        public String startKeyPage() {
+            return KeyServer.start(MainActivity.this);
+        }
+
+        @JavascriptInterface
+        public void stopKeyPage() {
+            KeyServer.stop();
         }
 
         /** Vrai sur Android TV / Google TV / Fire TV : l'interface passe en mode télécommande. */

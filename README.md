@@ -9,6 +9,9 @@ Version **Android** de NovaStream, l'appli IPTV Xtream Codes. Un seul APK pour :
 - Accueil, **En direct** (catégories + chaînes), **Films**, **Séries** (saisons, épisodes), **Ma liste**, **Téléchargés**, **Recherche**, **Paramètres**.
 - **Téléchargements** : un film, un épisode ou une saison entière, à regarder sans connexion (un à la fois, continue appli fermée ;
   les fichiers sont effacés si l'appli est désinstallée).
+- **Voix française (IA)** : pour un film ou une série sans VF, le son est transcrit (Whisper) et traduit (OpenAI),
+  puis lu par la voix française de l'appareil, son original baissé. Clé OpenAI de l'utilisateur
+  (Paramètres › Voix française, ou depuis un téléphone sur le même Wi-Fi), ~0,70 € par film de 2 h.
 - Sons de la version Windows : musique d'ambiance douce, clics et transitions (désactivables dans Paramètres).
 - Lecteur **ExoPlayer** : HLS (.m3u8), MPEG-TS (.ts), MP4, MKV ; sous-titres et pistes audio.
 - Direct : **haut / bas** (ou CH+ / CH−) pour zapper. Séries : l'épisode suivant s'enchaîne.
@@ -50,6 +53,8 @@ app/src/main/
 ├── java/…/MainActivity.java    # WebView + requêtes HTTP vers le serveur IPTV
 ├── java/…/PlayerActivity.java  # Lecteur plein écran ExoPlayer (Media3), en ligne ou fichier téléchargé
 ├── java/…/Downloads.java       # Téléchargements via le DownloadManager d'Android
+├── java/…/Dubber.java          # Voix française : extraction du son, Whisper, traduction, synthèse vocale
+├── java/…/KeyServer.java       # Page locale pour coller la clé OpenAI depuis un téléphone
 └── res/               # Icône et bannière Android TV
 ```
 

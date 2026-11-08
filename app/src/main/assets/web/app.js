@@ -491,6 +491,7 @@
     payload.audioLang = store.get("audioLang", "");
     payload.subLang = store.get("subLang", "off");
     payload.resize = store.get("resize." + kind, "fit");
+    payload.dub = kind !== "live" && store.get("dubAuto", false);
     Sound.playing(true);
     if (window.Android && window.Android.play) {
       window.Android.play(JSON.stringify(payload));
@@ -1431,6 +1432,44 @@
       return page;
     },
 
+    voiceKey: function () {
+      var A = window.Android;
+      var status = h("p", { class: "dl-intro" });
+      var input = h("input", { class: "input f", type: "password", placeholder: "sk-…", "data-autofocus": true,
+        "data-key": "key-input", autocomplete: "off", autocapitalize: "off", spellcheck: "false", "data-enter": "saveKey" });
+      function paint() {
+        status.textContent = A.hasOpenAiKey() ? "✅ Une clé est enregistrée sur cet appareil." : "Aucune clé enregistrée pour l'instant.";
+      }
+      function save() {
+        var k = str(input.value);
+        if (k.indexOf("sk-") !== 0) { toast("Une clé OpenAI commence par « sk- »."); return; }
+        A.setOpenAiKey(k);
+        S.version++;
+        input.value = "";
+        paint();
+        toast("Clé enregistrée");
+      }
+      enterHooks.saveKey = save;
+      var url = A.startKeyPage ? A.startKeyPage() : "";
+      var timer = setInterval(function () {
+        if (!status.isConnected) { clearInterval(timer); if (A.stopKeyPage) A.stopKeyPage(); return; }
+        paint();
+      }, 2000);
+      paint();
+      return h("div", { class: "page" }, h("h1", { class: "page-title display", text: "Clé OpenAI" }),
+        h("div", { class: "settings" },
+          status,
+          url ? h("div", { class: "setting key-phone" },
+            h("span", null, h("b", { text: "Le plus simple : depuis votre téléphone" }), h("br"),
+              "Sur le même Wi-Fi, ouvrez cette adresse et collez la clé :"),
+            h("span", { class: "key-url", text: url })) : null,
+          h("p", { class: "muted settings-note", text: "Ou tapez-la ici :" }),
+          h("div", { class: "search-bar" }, input, h("button", { class: "btn f", "data-key": "key-save", onclick: save }, "Enregistrer")),
+          h("button", { class: "setting f", "data-key": "key-clear", onclick: function () { A.setOpenAiKey(""); S.version++; paint(); toast("Clé effacée"); } },
+            h("span", { text: "Effacer la clé", style: "color:#fca5a5" }), h("span", { text: "›" })),
+          h("p", { class: "muted settings-note", text: "Pour obtenir une clé : platform.openai.com › API keys › Create new secret key, puis ajoutez quelques euros de crédit dans Billing." })));
+    },
+
     favorites: function () {
       var page = h("div", { class: "page" }, h("h1", { class: "page-title display", text: "Ma liste" }));
       var channels = S.favorites.filter(isLive);
@@ -1548,9 +1587,10 @@
       }
 
       function toggle(label, key, onChange) {
+        var def = key !== "dubAuto";
         var btn = h("button", { class: "setting f", "data-key": "set-" + key }, h("span", { text: label }), h("span"));
-        function paint() { btn.lastChild.textContent = store.get(key, true) ? "Activé" : "Désactivé"; }
-        btn.addEventListener("click", function () { store.set(key, !store.get(key, true)); paint(); if (onChange) onChange(); });
+        function paint() { btn.lastChild.textContent = store.get(key, def) ? "Activé" : "Désactivé"; }
+        btn.addEventListener("click", function () { store.set(key, !store.get(key, def)); paint(); if (onChange) onChange(); });
         paint();
         return btn;
       }
@@ -1570,6 +1610,14 @@
           choice("Format de l'image : chaînes", "resize.live", RESIZE, "fit"),
           formatBtn,
           h("p", { class: "muted settings-note", text: "Pendant une vidéo, le bouton « Langue · Sous-titres · Format » (en haut à droite, ou la touche Menu) change ces réglages pour la vidéo en cours." }),
+          window.Android && window.Android.hasOpenAiKey ? [
+            h("h2", { class: "settings-head", text: "Voix française (IA)" }),
+            h("button", { class: "setting f", "data-key": "set-openai", onclick: function () { go("voiceKey"); } },
+              h("span", { text: "Clé OpenAI" }),
+              h("span", { text: (window.Android.hasOpenAiKey() ? "Enregistrée ✓" : "À ajouter") + "  ›" })),
+            toggle("Voix française sur tous les films et séries", "dubAuto"),
+            h("p", { class: "muted settings-note", text: "Les films sans version française sont traduits par OpenAI et lus par la voix française de l'appareil, son original baissé. Environ 0,70 € pour un film de 2 h, payé sur votre compte OpenAI (le son du film y est envoyé). Pendant une vidéo : bouton « Langue · Sous-titres · Format » › Voix française." })
+          ] : null,
           h("h2", { class: "settings-head", text: "Sons" }),
           toggle("Musique d'ambiance", "music", Sound.update),
           toggle("Sons de l'interface", "sfx"),
