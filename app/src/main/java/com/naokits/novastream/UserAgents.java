@@ -11,6 +11,7 @@ import android.content.SharedPreferences;
 final class UserAgents {
 
     static final String[] ALL = {
+            "NovaStream/1.0 (Windows NT 10.0; Win64; x64) VLC/3.0.20",  // identique à la version Windows
             "VLC/3.0.20 LibVLC/3.0.20",
             "IPTVSmartersPlayer",
             "okhttp/4.12.0",
@@ -25,7 +26,7 @@ final class UserAgents {
     }
 
     static int index(Context ctx) {
-        int i = prefs(ctx).getInt("ua", 0);
+        int i = prefs(ctx).getInt("ua2", 0);
         return i >= 0 && i < ALL.length ? i : 0;
     }
 
@@ -35,6 +36,6 @@ final class UserAgents {
     }
 
     static void remember(Context ctx, int i) {
-        if (i != index(ctx)) prefs(ctx).edit().putInt("ua", i).apply();
+        if (i != index(ctx)) prefs(ctx).edit().putInt("ua2", i).apply();
     }
 }
