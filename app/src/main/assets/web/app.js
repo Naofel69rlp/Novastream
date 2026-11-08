@@ -1616,7 +1616,7 @@
               h("span", { text: "Clé OpenAI" }),
               h("span", { text: (window.Android.hasOpenAiKey() ? "Enregistrée ✓" : "À ajouter") + "  ›" })),
             toggle("Sous-titres français IA sur tous les films et séries", "dubAuto"),
-            h("p", { class: "muted settings-note", text: "Les films sans version française sont traduits par OpenAI et affichés en sous-titres français, calés sur les répliques. Environ 0,70 € pour un film de 2 h, payé sur votre compte OpenAI (le son du film y est envoyé). Pendant une vidéo : bouton « Langue · Sous-titres · Format » › Sous-titres français (IA)." })
+            h("p", { class: "muted settings-note", text: "Les films sans version française sont traduits par OpenAI et affichés en sous-titres français, calés sur les répliques. Tout le film est préparé en continu (cercle de progression à l’écran). Environ 0,70 € pour un film de 2 h, payé sur votre compte OpenAI (le son du film y est envoyé). Pendant une vidéo : bouton « Langue · Sous-titres · Format » › Sous-titres français (IA)." })
           ] : null,
           h("h2", { class: "settings-head", text: "Sons" }),
           toggle("Musique d'ambiance", "music", Sound.update),

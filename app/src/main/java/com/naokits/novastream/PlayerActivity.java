@@ -83,6 +83,11 @@ public class PlayerActivity extends Activity {
     private Dubber dubber;
     private TextView dubSubtitle;
     private TextView dubStatus;
+    private View prepPanel;
+    private ProgressRing prepRing;
+    private TextView prepText;
+    private View filmPanel;
+    private ProgressRing filmRing;
     private boolean dubPending;
     private LinearLayout errorPanel;
     private TextView errorText;
@@ -154,8 +159,55 @@ public class PlayerActivity extends Activity {
         dubStatus.setBackground(rounded(0xE6262638, 12));
         dubStatus.setVisibility(View.GONE);
         FrameLayout.LayoutParams statusParams = new FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        statusParams.gravity = Gravity.CENTER;
+        statusParams.gravity = Gravity.TOP | Gravity.CENTER_HORIZONTAL;
+        statusParams.setMargins(dp(60), dp(110), dp(60), 0);
         root.addView(dubStatus, statusParams);
+
+        // Préparation des sous-titres : grand cercle quand la lecture attend, petit cercle (film entier) sinon.
+        LinearLayout prep = new LinearLayout(this);
+        prep.setOrientation(LinearLayout.VERTICAL);
+        prep.setGravity(Gravity.CENTER_HORIZONTAL);
+        prep.setPadding(dp(32), dp(24), dp(32), dp(22));
+        prep.setBackground(rounded(0xE6181824, 16));
+        prepRing = new ProgressRing(this);
+        prep.addView(prepRing, new LinearLayout.LayoutParams(dp(120), dp(120)));
+        TextView prepTitle = new TextView(this);
+        prepTitle.setText("Préparation des sous-titres français");
+        prepTitle.setTextColor(Color.WHITE);
+        prepTitle.setTextSize(TypedValue.COMPLEX_UNIT_SP, 18);
+        prepTitle.setTypeface(Typeface.DEFAULT_BOLD);
+        prepTitle.setPadding(0, dp(14), 0, dp(4));
+        prep.addView(prepTitle);
+        prepText = new TextView(this);
+        prepText.setTextColor(0xFFB8B8C8);
+        prepText.setTextSize(TypedValue.COMPLEX_UNIT_SP, 15);
+        prepText.setGravity(Gravity.CENTER);
+        prep.addView(prepText);
+        prep.setVisibility(View.GONE);
+        prepPanel = prep;
+        FrameLayout.LayoutParams prepParams = new FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        prepParams.gravity = Gravity.CENTER;
+        root.addView(prep, prepParams);
+
+        LinearLayout film = new LinearLayout(this);
+        film.setOrientation(LinearLayout.HORIZONTAL);
+        film.setGravity(Gravity.CENTER_VERTICAL);
+        film.setPadding(dp(10), dp(8), dp(16), dp(8));
+        film.setBackground(rounded(0xB3181824, 30));
+        filmRing = new ProgressRing(this);
+        film.addView(filmRing, new LinearLayout.LayoutParams(dp(46), dp(46)));
+        TextView filmLabel = new TextView(this);
+        filmLabel.setText("Sous-titres FR\ndu film");
+        filmLabel.setTextColor(Color.WHITE);
+        filmLabel.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
+        filmLabel.setPadding(dp(10), 0, 0, 0);
+        film.addView(filmLabel);
+        film.setVisibility(View.GONE);
+        filmPanel = film;
+        FrameLayout.LayoutParams filmParams = new FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        filmParams.gravity = Gravity.TOP | Gravity.END;
+        filmParams.setMargins(0, dp(100), dp(40), 0);
+        root.addView(film, filmParams);
 
         // Bouton « Langue · Sous-titres · Format », visible avec les commandes du lecteur.
         optionsButton = new TextView(this);
@@ -201,14 +253,18 @@ public class PlayerActivity extends Activity {
         playerView.setPlayer(player);
         dubber = new Dubber(this, player, dubSubtitle, new Dubber.Listener() {
             @Override
-            public void onStatus(String text) {
-                if (text == null) {
-                    if (dubStatus.getTag() == null) dubStatus.setVisibility(View.GONE);
-                    return;
+            public void onProgress(int film, int passage) {
+                if (passage >= 0) {
+                    prepRing.setPercent(passage);
+                    prepText.setText("Ce passage : " + passage + " %   ·   film entier : " + Math.max(0, film) + " %\n"
+                            + "La lecture reprend dès que ce passage est prêt.");
+                    prepPanel.setVisibility(View.VISIBLE);
+                    filmPanel.setVisibility(View.GONE);
+                } else {
+                    prepPanel.setVisibility(View.GONE);
+                    if (film >= 0) filmRing.setPercent(film);
+                    filmPanel.setVisibility(film >= 0 ? View.VISIBLE : View.GONE);
                 }
-                dubStatus.setTag(null);
-                dubStatus.setText(text);
-                dubStatus.setVisibility(View.VISIBLE);
             }
 
             @Override
@@ -397,15 +453,11 @@ public class PlayerActivity extends Activity {
                 .show();
     }
 
-    private final Runnable hideDubInfo = () -> {
-        if (dubber == null || !dubber.isActive() || dubStatus.getTag() != null) dubStatus.setVisibility(View.GONE);
-        dubStatus.setTag(null);
-    };
+    private final Runnable hideDubInfo = () -> dubStatus.setVisibility(View.GONE);
 
     /** Message de la voix française affiché 8 secondes au centre de l'écran. */
     private void showDubInfo(String message) {
         dubStatus.setText(message);
-        dubStatus.setTag("info");
         dubStatus.setVisibility(View.VISIBLE);
         handler.removeCallbacks(hideDubInfo);
         handler.postDelayed(hideDubInfo, 8000);
@@ -424,7 +476,7 @@ public class PlayerActivity extends Activity {
         // et on ne passe jamais un « fr » douteux, sinon le doublage serait sauté sans rien dire.
         if (lang != null && (lang.startsWith("fr") || lang.equals("und") || lang.isEmpty())) lang = null;
         dubber.start(urls[player.getCurrentMediaItemIndex()], lang);
-        if (dubber.isActive()) showDubInfo("Sous-titres français activés : préparation des 3 premières minutes…");
+        if (dubber.isActive()) showDubInfo("Sous-titres français activés : préparation de tout le film, en commençant par ce passage.");
     }
 
     private void chooseResize() {
