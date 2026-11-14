@@ -228,8 +228,59 @@ public class MainActivity extends Activity {
         throw new IOException("Trop de redirections.");
     }
 
+    private void showEditDialog(String id, String title, String value, String kind) {
+        if (isFinishing()) return;
+        android.widget.EditText input = new android.widget.EditText(this);
+        input.setSingleLine(true);
+        int type = android.text.InputType.TYPE_CLASS_TEXT;
+        if ("url".equals(kind)) type |= android.text.InputType.TYPE_TEXT_VARIATION_URI;
+        else if ("password".equals(kind)) type |= android.text.InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD;
+        else type |= android.text.InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS;
+        input.setInputType(type);
+        input.setText(value == null ? "" : value);
+        input.setSelection(input.getText().length());
+        input.setImeOptions(android.view.inputmethod.EditorInfo.IME_ACTION_DONE | android.view.inputmethod.EditorInfo.IME_FLAG_NO_EXTRACT_UI);
+        int pad = (int) (20 * getResources().getDisplayMetrics().density);
+        android.widget.FrameLayout box = new android.widget.FrameLayout(this);
+        box.setPadding(pad, pad / 2, pad, 0);
+        box.addView(input);
+        android.app.AlertDialog dialog = new android.app.AlertDialog.Builder(this)
+                .setTitle(title)
+                .setView(box)
+                .setPositiveButton("Valider", (d, w) -> sendEdited(id, input.getText().toString()))
+                .setNegativeButton("Annuler", null)
+                .create();
+        input.setOnEditorActionListener((v, action, event) -> {
+            boolean enter = event != null && event.getKeyCode() == KeyEvent.KEYCODE_ENTER && event.getAction() == KeyEvent.ACTION_DOWN;
+            if (action == android.view.inputmethod.EditorInfo.IME_ACTION_DONE || enter) {
+                sendEdited(id, input.getText().toString());
+                dialog.dismiss();
+                return true;
+            }
+            return false;
+        });
+        if (dialog.getWindow() != null) {
+            dialog.getWindow().setSoftInputMode(android.view.WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_VISIBLE);
+        }
+        dialog.show();
+        input.requestFocus();
+    }
+
+    private void sendEdited(String id, String text) {
+        if (web != null) web.evaluateJavascript("window.NS && NS.edited(" + JSONObject.quote(id) + "," + JSONObject.quote(text) + ")", null);
+    }
+
     /** Fonctions appelées depuis le JavaScript de l'interface (window.Android). */
     private class Bridge {
+
+        /**
+         * Saisie d'un champ dans une vraie fenêtre Android : sur TV, les champs de la page ouvrent mal le clavier,
+         * et la touche OK de la télécommande faisait sauter au champ suivant. Le texte revient par NS.edited(id, texte).
+         */
+        @JavascriptInterface
+        public void editText(String id, String title, String value, String kind) {
+            runOnUiThread(() -> showEditDialog(id, title, value, kind));
+        }
 
         @JavascriptInterface
         public void play(String json) {

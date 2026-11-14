@@ -10,6 +10,9 @@
   var IS_TV = (window.Android && window.Android.isTv) ? window.Android.isTv()
     : !(window.matchMedia && window.matchMedia("(pointer: coarse)").matches);
   document.documentElement.classList.add(IS_TV ? "tv" : "touch");
+  // Sur TV, les champs de texte s'éditent dans une fenêtre Android : le clavier de la page s'ouvrait mal,
+  // la touche OK faisait sauter au champ suivant et on ne pouvait plus remonter.
+  var NATIVE_EDIT = IS_TV && !!(window.Android && window.Android.editText);
 
   // ---------------------------------------------------------------- Utilitaires
 
@@ -27,6 +30,7 @@
       });
     }
     for (var i = 2; i < arguments.length; i++) append(el, arguments[i]);
+    if (tag === "input" && NATIVE_EDIT) el.readOnly = true;
     return el;
   }
 
@@ -898,6 +902,11 @@
     if (key === "Enter" && target && target.classList.contains("f") && !typing) {
       e.preventDefault(); target.click(); return;
     }
+    if (key === "Enter" && typing && NATIVE_EDIT) {
+      e.preventDefault();
+      openEditor(target);
+      return;
+    }
     if (key === "Enter" && typing) {
       var submit = target.getAttribute("data-enter");
       if (submit && enterHooks[submit]) { e.preventDefault(); enterHooks[submit](); }
@@ -911,6 +920,31 @@
   });
 
   var enterHooks = {};
+  var editing = null;
+
+  function fieldTitle(el) {
+    var label = el.id && document.querySelector('label[for="' + el.id + '"]');
+    return (label && label.textContent) || el.getAttribute("placeholder") || "Saisie";
+  }
+
+  function openEditor(el) {
+    editing = el;
+    var kind = el.id === "server" || el.type === "url" ? "url" : el.type === "password" ? "password" : "text";
+    window.Android.editText("f" + Date.now(), fieldTitle(el), el.value || "", kind);
+  }
+
+  // Retour de la fenêtre de saisie Android : on remplit le champ puis on passe à la suite.
+  function edited(id, value) {
+    var el = editing;
+    editing = null;
+    if (!el || !el.isConnected) return;
+    el.value = value;
+    el.dispatchEvent(new Event("input", { bubbles: true }));
+    focus(el);
+    var submit = el.getAttribute("data-enter");
+    if (submit && enterHooks[submit]) enterHooks[submit]();
+    else move("down");
+  }
   var lastMoveAt = 0;
 
   // Clic sonore sur chaque bouton validé (la transition le remplace si l'écran change).
@@ -1790,6 +1824,7 @@
       }
       return false;
     },
+    edited: function (id, value) { edited(id, value); },
     focus: function () { var el = document.activeElement; if (!el || el === document.body) focus(defaultFocus()); },
     // Appelés par Android quand l'appli passe au second plan (lecteur ouvert…) puis revient.
     pause: function () { Sound.visible(false); },
