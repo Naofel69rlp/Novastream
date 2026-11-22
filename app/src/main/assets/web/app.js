@@ -92,10 +92,23 @@
     });
   }, { rootMargin: "900px 900px" }) : null;
 
-  function img(src, onFail) {
+  // Affiches TMDB : on demande la taille « w342 » (largement suffisante pour une vignette) au lieu de l'original,
+  // bien plus lourd à télécharger et à décoder pour la TV. En cas d'échec, on revient à l'adresse d'origine.
+  function smallPoster(src) {
+    return src.replace(/(image\.tmdb\.org\/t\/p\/)(original|w\d{3,4}[^\/]*)\//, "$1w342/");
+  }
+
+  function img(src, onFail, small) {
     if (!src || !/^https?:/.test(src)) return null;
+    var original = src;
+    if (small) src = smallPoster(src);
     var el = h("img", { alt: "", decoding: "async", onerror: function () {
       if (!this.getAttribute("src")) return;
+      if (this.getAttribute("data-src") !== original) {
+        this.setAttribute("data-src", original);
+        this.setAttribute("src", original);
+        return;
+      }
       if (imageWatcher) imageWatcher.unobserve(this);
       this.remove();
       if (onFail) onFail();
@@ -239,9 +252,9 @@
   // listes allégées). Dans un navigateur, on interroge directement le serveur.
   var VIA_APP = !!window.Android && location.pathname.indexOf("/web/") === 0;
 
-  function httpGet(url, compact) {
+  function httpGet(url, compact, cached) {
     if (VIA_APP) {
-      return fetch("/api?u=" + encodeURIComponent(url) + (compact ? "&compact=1" : ""), { cache: "no-store" })
+      return fetch("/api?u=" + encodeURIComponent(url) + (compact ? "&compact=1" : "") + (cached ? "&cached=1" : ""), { cache: "no-store" })
         .catch(function () { throw new Error("Impossible de joindre le serveur. Vérifiez l'URL ou votre connexion."); })
         .then(function (r) {
           return r.text().then(function (text) {
@@ -276,12 +289,12 @@
   var Xtream = {
     creds: null,
 
-    api: function (action, params, compact) {
+    api: function (action, params, compact, cached) {
       var c = Xtream.creds;
       var q = "username=" + encodeURIComponent(c.username) + "&password=" + encodeURIComponent(c.password);
       if (action) q += "&action=" + action;
       Object.keys(params || {}).forEach(function (k) { q += "&" + k + "=" + encodeURIComponent(params[k]); });
-      return httpGet(c.server + "/player_api.php?" + q, compact).then(function (text) {
+      return httpGet(c.server + "/player_api.php?" + q, compact, cached).then(function (text) {
         try { return JSON.parse(text); }
         catch (e) { throw new Error("Réponse inattendue du serveur (pas du JSON valide)."); }
       });
@@ -307,8 +320,8 @@
       });
     },
 
-    list: function (action) {
-      return Xtream.api(action, null, true).then(function (d) { return Array.isArray(d) ? d : []; });
+    list: function (action, cached) {
+      return Xtream.api(action, null, true, cached).then(function (d) { return Array.isArray(d) ? d : []; });
     },
 
     streamUrl: function (kind, id, ext) {
@@ -430,6 +443,8 @@
     user: null,
     demo: false,
     catalogs: {},  // live / movies / series → { cats, items } ou une promesse en cours
+    fresh: {},     // listes déjà rechargées depuis le serveur pendant cette session
+    session: 0,
     favorites: store.get("favorites", []),
     liveFormat: store.get("liveFormat", "ts"),
     stack: [],     // pile de navigation : { name, params, focus, el (écran gardé) }
@@ -437,6 +452,21 @@
     version: 0     // change quand Ma liste change : les écrans gardés sont alors reconstruits
   };
 
+  var CATALOG_ACTIONS = {
+    live: ["get_live_categories", "get_live_streams", liveItem],
+    movies: ["get_vod_categories", "get_vod_streams", movieItem],
+    series: ["get_series_categories", "get_series", seriesItem]
+  };
+
+  function loadCatalog(section, cached) {
+    var a = CATALOG_ACTIONS[section];
+    return Promise.all([Xtream.list(a[0], cached), Xtream.list(a[1], cached)]).then(function (r) {
+      return { cats: r[0].map(category), items: r[1].map(a[2]).filter(function (i) { return i.id; }) };
+    });
+  }
+
+  // Catalogue : la copie gardée sur l'appareil s'affiche tout de suite (plus d'attente du serveur à chaque
+  // lancement), puis la version à jour est téléchargée en arrière-plan et sert aux écrans suivants.
   function catalog(section) {
     var c = S.catalogs[section];
     if (c && c.items) return Promise.resolve(c);
@@ -444,22 +474,78 @@
     var p;
     if (S.demo) {
       p = Promise.resolve(Demo[section]());
-    } else if (section === "live") {
-      p = Promise.all([Xtream.list("get_live_categories"), Xtream.list("get_live_streams")]).then(function (r) {
-        return { cats: r[0].map(category), items: r[1].map(liveItem).filter(function (i) { return i.id; }) };
-      });
-    } else if (section === "movies") {
-      p = Promise.all([Xtream.list("get_vod_categories"), Xtream.list("get_vod_streams")]).then(function (r) {
-        return { cats: r[0].map(category), items: r[1].map(movieItem).filter(function (i) { return i.id; }) };
+    } else if (VIA_APP && !S.fresh[section]) {
+      p = loadCatalog(section, true).then(function (data) {
+        if (!data.items.length) throw new Error("copie vide");
+        refreshLater(section);
+        return data;
+      }).catch(function () {
+        S.fresh[section] = true;
+        return loadCatalog(section, false);
       });
     } else {
-      p = Promise.all([Xtream.list("get_series_categories"), Xtream.list("get_series")]).then(function (r) {
-        return { cats: r[0].map(category), items: r[1].map(seriesItem).filter(function (i) { return i.id; }) };
-      });
+      p = loadCatalog(section, false);
     }
     S.catalogs[section] = p.then(function (data) { S.catalogs[section] = data; return data; },
       function (err) { delete S.catalogs[section]; throw err; });
     return S.catalogs[section];
+  }
+
+  // Mises à jour en arrière-plan, une liste à la fois, après l'affichage du premier écran.
+  var refreshQueue = [], refreshing = false;
+
+  function refreshLater(section) {
+    if (S.fresh[section] || refreshQueue.indexOf(section) !== -1) return;
+    refreshQueue.push(section);
+    if (!refreshing) setTimeout(nextRefresh, 2500);
+  }
+
+  function nextRefresh() {
+    var section = refreshQueue.shift();
+    if (!section) { refreshing = false; return; }
+    refreshing = true;
+    var session = S.session;
+    loadCatalog(section, false).then(function (data) {
+      if (session !== S.session) return;
+      S.fresh[section] = true;
+      if (data.items.length) S.catalogs[section] = data;
+    }, function () { /* serveur indisponible : on garde la copie */ }).then(function () {
+      setTimeout(nextRefresh, 300);
+    });
+  }
+
+  // Tri « plus récents d'abord » et tri par catégorie calculés une seule fois par catalogue.
+  function inCategory(c, catId) {
+    if (catId === "all") return recent(c.items, c.items.length);
+    if (!c._byCat) {
+      c._byCat = {};
+      c.items.forEach(function (i) { (c._byCat[i.cat] = c._byCat[i.cat] || []).push(i); });
+    }
+    return c._byCat[catId] || [];
+  }
+
+  // Fiches (résumé, épisodes) gardées en mémoire et préchargées quand une affiche reste sélectionnée.
+  var INFO = {}, infoKeys = [];
+
+  function detailInfo(item) {
+    var key = item.kind + ":" + item.id;
+    if (INFO[key]) return INFO[key];
+    var p = item.kind === "series" ? Xtream.api("get_series_info", { series_id: item.id })
+      : Xtream.api("get_vod_info", { vod_id: item.id });
+    INFO[key] = p;
+    infoKeys.push(key);
+    if (infoKeys.length > 120) delete INFO[infoKeys.shift()];
+    p.catch(function () { if (INFO[key] === p) delete INFO[key]; });
+    return p;
+  }
+
+  var prefetchTimer = null;
+
+  function prefetchDetail(el) {
+    clearTimeout(prefetchTimer);
+    var item = el && el.__item;
+    if (!item || S.demo || (item.kind !== "movie" && item.kind !== "series")) return;
+    prefetchTimer = setTimeout(function () { detailInfo(item).catch(function () {}); }, 450);
   }
 
   function isFavorite(item) {
@@ -510,9 +596,18 @@
 
   var webPlayer = null;
 
+  // Au plus 200 chaînes autour de celle choisie sont passées au lecteur : avec des milliers de chaînes,
+  // la liste complète ralentissait l'ouverture du lecteur. Haut/bas zappe toujours dans cette liste.
+  var LIVE_WINDOW = 200;
+
   function playLive(channels, index) {
-    play({ live: true, kind: "live", index: index, titles: channels.map(function (c) { return c.name; }),
-      urls: channels.map(liveUrl), subtitle: "En direct" });
+    var start = 0, list = channels;
+    if (channels.length > LIVE_WINDOW) {
+      start = Math.max(0, Math.min(index - LIVE_WINDOW / 2, channels.length - LIVE_WINDOW));
+      list = channels.slice(start, start + LIVE_WINDOW);
+    }
+    play({ live: true, kind: "live", index: index - start, firstNumber: start + 1,
+      titles: list.map(function (c) { return c.name; }), urls: list.map(liveUrl), subtitle: "En direct" });
   }
 
   // Adresses de secours si le serveur refuse l'adresse habituelle (HTTP 403/404) : certains serveurs ne
@@ -771,6 +866,7 @@
     el.focus({ preventScroll: true });
     if (scroll !== false) scrollIntoView(el);
     if (!el.closest(".nav")) lastContentFocus = el;
+    prefetchDetail(el);
     var hook = el.getAttribute("data-onfocus");
     if (hook && focusHooks[hook]) focusHooks[hook](el);
   }
@@ -820,8 +916,45 @@
     else if (er.bottom > br.bottom - margin) scrollTo(box, "scrollTop", er.bottom - br.bottom + margin);
   }
 
+  // Déplacements courants calculés directement (grille d'affiches, rangée, liste de chaînes) :
+  // plus besoin de mesurer tous les éléments de la page à chaque appui, ce qui ralentissait les longues listes.
+  function quickMove(cur, dir) {
+    if (!cur || !cur.classList || !cur.classList.contains("f") || cur.offsetParent === null) return null;
+    var parent = cur.parentElement;
+    if (!parent) return null;
+    if (parent.classList.contains("grid")) {
+      var items = parent.children, n = items.length;
+      while (n && !items[n - 1].classList.contains("f")) n--;
+      var idx = Array.prototype.indexOf.call(items, cur);
+      if (idx < 0 || idx >= n) return null;
+      var top0 = items[0].offsetTop, cols = 1;
+      while (cols < n && items[cols].offsetTop === top0) cols++;
+      var col = idx % cols, target = -1;
+      if (dir === "left" && col > 0) target = idx - 1;
+      else if (dir === "right" && col < cols - 1 && idx + 1 < n) target = idx + 1;
+      else if (dir === "up" && idx - cols >= 0) target = idx - cols;
+      else if (dir === "down") {
+        if (idx + cols < n) target = idx + cols;
+        else if (Math.floor(idx / cols) < Math.floor((n - 1) / cols)) target = n - 1;
+      }
+      return target >= 0 ? items[target] : null;
+    }
+    if (parent.classList.contains("row") && (dir === "left" || dir === "right")) {
+      var sib = dir === "left" ? cur.previousElementSibling : cur.nextElementSibling;
+      return sib && sib.classList.contains("f") ? sib : null;
+    }
+    if (parent.classList.contains("channel-wrap") && (dir === "up" || dir === "down")) {
+      var wrap = dir === "up" ? parent.previousElementSibling : parent.nextElementSibling;
+      if (!wrap || !wrap.classList.contains("channel-wrap")) return null;
+      return wrap.querySelector(cur.classList.contains("channel") ? ".channel" : ".fav-btn");
+    }
+    return null;
+  }
+
   function move(dir) {
     var cur = document.activeElement;
+    var quick = quickMove(cur, dir);
+    if (quick) { focus(quick); Sound.tick(); return; }
     var all = focusables();
     if (!cur || all.indexOf(cur) === -1) { focus(defaultFocus()); return; }
 
@@ -1092,9 +1225,11 @@
     var art = h("div", { class: "art", style: "background:" + gradient(item.name) },
       h("div", { class: "ph" }, h("span", { text: item.name })),
       item.rating ? h("div", { class: "rating", html: "<i>★</i> " + (Math.round(item.rating * 10) / 10) }) : null,
-      img(item.image));
-    return h("button", { class: "poster f", "data-key": key || item.kind + "-" + item.id,
+      img(item.image, null, true));
+    var card = h("button", { class: "poster f", "data-key": key || item.kind + "-" + item.id,
       onclick: function () { openItem(item); } }, art, h("div", { class: "name", text: item.name }));
+    card.__item = item;
+    return card;
   }
 
   function channelLogo(item) {
@@ -1134,7 +1269,8 @@
   }
 
   function recent(items, n) {
-    return items.slice().sort(function (a, b) { return b.added - a.added; }).slice(0, n);
+    var sorted = items._recent || (items._recent = items.slice().sort(function (a, b) { return b.added - a.added; }));
+    return n >= sorted.length ? sorted : sorted.slice(0, n);
   }
 
   // Texte de recherche sans accents, majuscules ni ponctuation : « Spider-Man » = « spiderman » = « spider man ».
@@ -1270,7 +1406,7 @@
         function showChannels(catId) {
           current = catId;
           params.cat = catId;
-          var list = catId === "all" ? c.items : c.items.filter(function (i) { return i.cat === catId; });
+          var list = catId === "all" ? c.items : inCategory(c, catId);
           channelsCol.innerHTML = "";
           channelsCol.appendChild(h("div", { class: "col-head" }, h("span", { text: "CHAÎNES" }), h("span", { text: String(list.length) })));
           lazyList(channelsCol, list, function (ch, i) { return channelRow(list, i); }, 60,
@@ -1300,7 +1436,7 @@
       var page = h("div", { class: "detail" });
       var info = S.demo ? Promise.resolve({ info: { plot: "Un film de démonstration pour essayer le lecteur de NovaStream sur votre TV.",
         genre: "Science-fiction", duration: "01:52:00", director: "Réalisation Fictive", cast: "Distribution Fictive" } })
-        : Xtream.api("get_vod_info", { vod_id: item.id });
+        : detailInfo(item);
       fill(page, info.catch(function () { return {}; }), function (data) {
         var i = (data && data.info) || {};
         var md = (data && data.movie_data) || {};
@@ -1323,7 +1459,7 @@
     seriesDetail: function (params) {
       var item = params.item;
       var page = h("div", { class: "detail" });
-      var info = S.demo ? Promise.resolve(Demo.seriesInfo(item)) : Xtream.api("get_series_info", { series_id: item.id }).then(function (d) {
+      var info = S.demo ? Promise.resolve(Demo.seriesInfo(item)) : detailInfo(item).then(function (d) {
         var i = (d && d.info) || {};
         return { plot: str(i.plot), genre: str(i.genre), year: str(i.releaseDate || i.release_date).slice(0, 4),
           rating: rating(i), director: str(i.director), cast: str(i.cast), backdrop: firstString(i.backdrop_path),
@@ -1657,6 +1793,8 @@
           toggle("Sons de l'interface", "sfx"),
           h("button", { class: "setting f", "data-key": "set-reload", "data-autofocus": true, onclick: function () {
             S.catalogs = {};
+            S.fresh = { live: true, movies: true, series: true };
+            INFO = {}; infoKeys = [];
             toast("Catalogue rechargé");
             setRoot("home");
           } }, h("span", { text: "Recharger le catalogue" }), h("span", { text: "›" })),
@@ -1760,7 +1898,7 @@
       function show(catId) {
         current = catId;
         params.cat = catId;
-        var list = catId === "all" ? recent(c.items, c.items.length) : c.items.filter(function (i) { return i.cat === catId; });
+        var list = inCategory(c, catId);
         grid.innerHTML = "";
         head.innerHTML = "";
         append(head, [h("span", { text: (cats.find(function (x) { return x.id === catId; }) || {}).name.toUpperCase() }),
@@ -1790,6 +1928,9 @@
     S.user = user;
     S.demo = demo;
     S.catalogs = {};
+    S.fresh = {};
+    S.session++;
+    INFO = {}; infoKeys = [];
     if (demo) store.set("demo", true); else { store.remove("demo"); store.set("user", user); }
     setRoot("home");
   }
@@ -1798,8 +1939,10 @@
     store.remove("creds");
     store.remove("demo");
     store.remove("user");
+    if (window.Android && window.Android.clearCatalogCache) window.Android.clearCatalogCache();
     S.user = null;
     S.catalogs = {};
+    S.session++;
     S.stack = [{ name: "login", params: {} }];
     render();
   }
@@ -1837,6 +1980,27 @@
     var creds = store.get("creds", null);
     if (store.get("demo", false)) { startSession(Demo.user, true); return; }
     if (!creds) { S.stack = [{ name: "login", params: {} }]; render(); return; }
+    // Déjà connecté sur cet appareil : l'accueil s'ouvre tout de suite (catalogue gardé en copie locale)
+    // et l'abonnement est vérifié en arrière-plan.
+    var known = store.get("user", null);
+    if (known) {
+      Xtream.creds = creds;
+      startSession(known, false);
+      Xtream.login(creds).then(function (info) {
+        S.user = info;
+        store.set("user", info);
+      }, function (err) {
+        if (/expiré|désactivé|incorrect/.test(err.message)) {
+          S.stack = [{ name: "login", params: {} }];
+          render();
+          toast(err.message);
+          return;
+        }
+        if (DL.list.length && S.stack.length === 1 && S.root === "home") setRoot("downloads");
+        toast("Serveur injoignable pour l'instant : le catalogue affiché est celui de la dernière visite.");
+      });
+      return;
+    }
     app.appendChild(h("div", { class: "loader" }));
     Xtream.login(creds).then(function (info) { startSession(info, false); }, function (err) {
       // Pas d'Internet : on garde la session pour pouvoir regarder les téléchargements.

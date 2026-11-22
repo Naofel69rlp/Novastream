@@ -6,9 +6,12 @@ import android.util.JsonWriter;
 
 import java.io.BufferedInputStream;
 import java.io.BufferedWriter;
+import java.io.File;
+import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
+import java.io.OutputStream;
 import java.io.OutputStreamWriter;
 import java.io.PipedInputStream;
 import java.io.PipedOutputStream;
@@ -32,15 +35,27 @@ final class JsonCompactor {
     }
 
     static InputStream compact(final InputStream raw) throws IOException {
+        return compact(raw, null);
+    }
+
+    /**
+     * Comme {@link #compact(InputStream)}, et garde en plus une copie de la liste allégée dans {@code saveTo}
+     * (catalogue affiché tout de suite au prochain lancement). La copie n'est gardée que si la liste est complète.
+     */
+    static InputStream compact(final InputStream raw, final File saveTo) throws IOException {
         final PipedInputStream result = new PipedInputStream(256 * 1024);
         final PipedOutputStream sink = new PipedOutputStream(result);
         Thread worker = new Thread(() -> {
             JsonReader in = null;
             JsonWriter out = null;
+            Tee tee = null;
+            boolean complete = false;
+            int count = 0;
             try {
                 in = new JsonReader(new InputStreamReader(new BufferedInputStream(raw, 64 * 1024), StandardCharsets.UTF_8));
                 in.setLenient(true);
-                out = new JsonWriter(new BufferedWriter(new OutputStreamWriter(sink, StandardCharsets.UTF_8), 64 * 1024));
+                tee = new Tee(sink, saveTo);
+                out = new JsonWriter(new BufferedWriter(new OutputStreamWriter(tee, StandardCharsets.UTF_8), 64 * 1024));
                 out.beginArray();
                 if (in.peek() == JsonToken.BEGIN_ARRAY) {
                     in.beginArray();
@@ -50,18 +65,22 @@ final class JsonCompactor {
                             continue;
                         }
                         copyObject(in, out);
+                        count++;
                     }
                     in.endArray();
                 } else {
                     in.skipValue();
                 }
                 out.endArray();
+                out.flush();
+                complete = count > 0;  // une liste vide (compte expiré…) ne remplace pas la copie précédente
             } catch (IOException | RuntimeException ignored) {
                 // Flux coupé : l'interface recevra un JSON incomplet et affichera une erreur.
             } finally {
                 closeQuietly(out);
                 closeQuietly(in);
                 closeQuietly(sink);
+                if (tee != null) tee.finish(complete);
             }
         }, "ns-json-compact");
         worker.start();
@@ -91,6 +110,78 @@ final class JsonCompactor {
         }
         in.endObject();
         out.endObject();
+    }
+
+    /** Écrit vers l'interface et, si possible, vers un fichier temporaire renommé à la fin. */
+    private static final class Tee extends OutputStream {
+        private final OutputStream main;
+        private final File target;
+        private File tmp;
+        private OutputStream copy;
+
+        Tee(OutputStream main, File target) {
+            this.main = main;
+            this.target = target;
+            if (target == null) return;
+            try {
+                File dir = target.getParentFile();
+                if (dir != null && !dir.isDirectory()) dir.mkdirs();
+                tmp = File.createTempFile("part", ".tmp", dir);
+                copy = new FileOutputStream(tmp);
+            } catch (IOException | RuntimeException e) {
+                dropCopy();
+            }
+        }
+
+        @Override
+        public void write(int b) throws IOException {
+            main.write(b);
+            if (copy != null) {
+                try {
+                    copy.write(b);
+                } catch (IOException e) {
+                    dropCopy();
+                }
+            }
+        }
+
+        @Override
+        public void write(byte[] b, int off, int len) throws IOException {
+            main.write(b, off, len);
+            if (copy != null) {
+                try {
+                    copy.write(b, off, len);
+                } catch (IOException e) {
+                    dropCopy();
+                }
+            }
+        }
+
+        @Override
+        public void flush() throws IOException {
+            main.flush();
+        }
+
+        @Override
+        public void close() throws IOException {
+            main.close();
+        }
+
+        /** Garde la copie si la liste est complète, sinon l'efface. */
+        void finish(boolean complete) {
+            if (copy == null) return;
+            closeQuietly(copy);
+            copy = null;
+            if (!complete || !tmp.renameTo(target)) tmp.delete();
+            tmp = null;
+        }
+
+        private void dropCopy() {
+            if (copy != null) closeQuietly(copy);
+            copy = null;
+            if (tmp != null) tmp.delete();
+            tmp = null;
+        }
     }
 
     private static void closeQuietly(java.io.Closeable c) {

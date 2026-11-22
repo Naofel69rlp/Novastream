@@ -10,8 +10,10 @@ final class PlayerController: ObservableObject {
 
     private var statusObservation: NSKeyValueObservation?
 
-    func load(_ url: URL) {
+    func load(_ url: URL, isLive: Bool = false) {
         failure = nil
+        // Direct : l'image démarre dès les premières secondes reçues au lieu d'attendre une grosse réserve.
+        player.automaticallyWaitsToMinimizeStalling = !isLive
         currentURL = url
         let asset = AVURLAsset(url: url, options: [
             "AVURLAssetHTTPHeaderFieldsKey": ["User-Agent": XtreamClient.userAgent],
@@ -86,7 +88,7 @@ struct PlayerScreen: View {
         .statusBarHidden(isLandscape)
         .onAppear {
             currentChannel = playback.channels.first { $0.id == playback.channelId }
-            controller.load(playback.url)
+            controller.load(playback.url, isLive: playback.isLive)
         }
         .onDisappear { controller.stop() }
     }
@@ -174,7 +176,7 @@ struct PlayerScreen: View {
     private func switchTo(_ channel: MediaItem) {
         guard let url = model.liveURL(for: channel) else { return }
         currentChannel = channel
-        controller.load(url)
+        controller.load(url, isLive: true)
     }
 
     /// Message d'erreur avec les solutions de repli (VLC, Infuse, copie du lien).

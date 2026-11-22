@@ -37,8 +37,12 @@ import androidx.media3.common.util.UnstableApi;
 import androidx.media3.datasource.DefaultDataSource;
 import androidx.media3.datasource.DefaultHttpDataSource;
 import androidx.media3.datasource.HttpDataSource;
+import androidx.media3.exoplayer.DefaultLoadControl;
+import androidx.media3.exoplayer.DefaultRenderersFactory;
 import androidx.media3.exoplayer.ExoPlayer;
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory;
+import androidx.media3.extractor.DefaultExtractorsFactory;
+import androidx.media3.extractor.ts.DefaultTsPayloadReaderFactory;
 import androidx.media3.ui.AspectRatioFrameLayout;
 import androidx.media3.ui.PlayerView;
 
@@ -63,6 +67,15 @@ public class PlayerActivity extends Activity {
     static final String EXTRA_RESIZE = "resize";
     static final String EXTRA_ALTS = "alts";
     static final String EXTRA_DUB = "dub";
+    static final String EXTRA_FIRST_NUMBER = "firstNumber";
+
+    /**
+     * Démarrage rapide : la vidéo part dès 1 s d'image en réserve (2,5 s par défaut), et 2 s après une coupure
+     * (5 s par défaut). La réserve continue ensuite de se remplir jusqu'à 50 s comme avant.
+     */
+    private static final int START_BUFFER_MS = 1000;
+    private static final int REBUFFER_MS = 2000;
+    private static final int MAX_BUFFER_MS = 50000;
 
     private static final String[] RESIZE_KEYS = {"fit", "zoom", "fill"};
     private static final String[] RESIZE_LABELS = {"Adapté à l'écran", "Plein écran (zoom)", "Étiré"};
@@ -95,6 +108,7 @@ public class PlayerActivity extends Activity {
     private String[] titles;
     private boolean live;
     private String subtitle;
+    private int firstNumber = 1;
     private final Handler handler = new Handler(Looper.getMainLooper());
     private final Runnable hideBanner = () -> banner.animate().alpha(0f).setDuration(300);
 
@@ -108,6 +122,7 @@ public class PlayerActivity extends Activity {
         titles = intent.getStringArrayExtra(EXTRA_TITLES);
         live = intent.getBooleanExtra(EXTRA_LIVE, false);
         subtitle = intent.getStringExtra(EXTRA_SUBTITLE);
+        firstNumber = Math.max(1, intent.getIntExtra(EXTRA_FIRST_NUMBER, 1));
         if (urls == null || urls.length == 0) {
             finish();
             return;
@@ -126,6 +141,8 @@ public class PlayerActivity extends Activity {
         playerView.setControllerShowTimeoutMs(3500);
         playerView.setShowShuffleButton(false);
         playerView.setShowSubtitleButton(true);
+        // Cercle de chargement pendant le démarrage et les coupures (sinon écran noir sans signe de vie).
+        playerView.setShowBuffering(PlayerView.SHOW_BUFFERING_ALWAYS);
         root.addView(playerView, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
 
         banner = new TextView(this);
@@ -245,8 +262,18 @@ public class PlayerActivity extends Activity {
                 .setAllowCrossProtocolRedirects(true)
                 .setConnectTimeoutMs(15000)
                 .setReadTimeoutMs(30000);
-        player = new ExoPlayer.Builder(this)
-                .setMediaSourceFactory(new DefaultMediaSourceFactory(this).setDataSourceFactory(new DefaultDataSource.Factory(this, http)))
+        // Chaînes en MPEG-TS : l'image démarre sur la première image complète reçue, sans attendre
+        // la prochaine image clé « IDR » (souvent plusieurs secondes plus loin sur les flux IPTV).
+        DefaultExtractorsFactory extractors = new DefaultExtractorsFactory()
+                .setTsExtractorFlags(DefaultTsPayloadReaderFactory.FLAG_ALLOW_NON_IDR_KEYFRAMES);
+        DefaultLoadControl loadControl = new DefaultLoadControl.Builder()
+                .setBufferDurationsMs(MAX_BUFFER_MS, MAX_BUFFER_MS, START_BUFFER_MS, REBUFFER_MS)
+                .build();
+        // Si le décodeur matériel principal refuse le flux, on essaie le suivant au lieu d'échouer.
+        DefaultRenderersFactory renderers = new DefaultRenderersFactory(this).setEnableDecoderFallback(true);
+        player = new ExoPlayer.Builder(this, renderers)
+                .setMediaSourceFactory(new DefaultMediaSourceFactory(new DefaultDataSource.Factory(this, http), extractors))
+                .setLoadControl(loadControl)
                 .setSeekBackIncrementMs(10000)
                 .setSeekForwardIncrementMs(30000)
                 .build();
@@ -390,7 +417,7 @@ public class PlayerActivity extends Activity {
     private void showBanner() {
         int i = player == null ? 0 : player.getCurrentMediaItemIndex();
         String text = titleAt(i);
-        if (live && urls.length > 1) text = (i + 1) + "  ·  " + text;
+        if (live && urls.length > 1) text = (firstNumber + i) + "  ·  " + text;
         else if (subtitle != null && !subtitle.isEmpty() && !live) text = text + "\n" + subtitle;
         banner.setText(live ? "● DIRECT   " + text : text);
         banner.setAlpha(1f);
@@ -756,6 +783,12 @@ public class PlayerActivity extends Activity {
     }
 
     // ---------------------------------------------------------------- Cycle de vie
+
+    @Override
+    public void finish() {
+        super.finish();
+        overridePendingTransition(0, 0);  // retour immédiat au menu
+    }
 
     @Override
     protected void onStop() {

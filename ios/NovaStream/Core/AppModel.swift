@@ -38,9 +38,16 @@ final class AppModel: ObservableObject {
     @Published private(set) var liveCategories: [MediaCategory] = []
     @Published private(set) var channels: [MediaItem] = []
     @Published private(set) var movieCategories: [MediaCategory] = []
-    @Published private(set) var movies: [MediaItem] = []
+    @Published private(set) var movies: [MediaItem] = [] {
+        didSet { recentMovies = Array(movies.sorted { $0.added > $1.added }.prefix(20)) }
+    }
     @Published private(set) var seriesCategories: [MediaCategory] = []
-    @Published private(set) var series: [MediaItem] = []
+    @Published private(set) var series: [MediaItem] = [] {
+        didSet { recentSeries = Array(series.sorted { $0.added > $1.added }.prefix(20)) }
+    }
+    /// Triés une seule fois au chargement (avant : tout le catalogue était retrié à chaque affichage de l'accueil).
+    @Published private(set) var recentMovies: [MediaItem] = []
+    @Published private(set) var recentSeries: [MediaItem] = []
     @Published private(set) var states: [CatalogSection: LoadState] = [:]
 
     @Published private(set) var favorites: [MediaItem] = []
@@ -165,9 +172,6 @@ final class AppModel: ObservableObject {
             states[section] = .failed(error.localizedDescription)
         }
     }
-
-    var recentMovies: [MediaItem] { Array(movies.sorted { $0.added > $1.added }.prefix(20)) }
-    var recentSeries: [MediaItem] { Array(series.sorted { $0.added > $1.added }.prefix(20)) }
 
     func movieDetail(for item: MediaItem) async throws -> MovieDetail {
         if isDemo { return DemoData.movieDetail(for: item) }

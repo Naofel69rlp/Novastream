@@ -24,13 +24,17 @@ import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
 
+import java.io.BufferedInputStream;
 import java.io.ByteArrayInputStream;
+import java.io.File;
+import java.io.FileInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.HttpURLConnection;
 import java.net.SocketTimeoutException;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -78,7 +82,8 @@ public class MainActivity extends Activity {
                 if (!HOST.equals(url.getHost())) return null;
                 String path = url.getPath() == null ? "" : url.getPath();
                 if (path.equals("/api")) {
-                    return proxy(url.getQueryParameter("u"), "1".equals(url.getQueryParameter("compact")));
+                    return proxy(url.getQueryParameter("u"), "1".equals(url.getQueryParameter("compact")),
+                            "1".equals(url.getQueryParameter("cached")));
                 }
                 if (path.startsWith("/web/")) return asset(path.substring(1));
                 return error(404, "Introuvable");
@@ -99,6 +104,26 @@ public class MainActivity extends Activity {
         setContentView(web);
         web.loadUrl(START_URL);
         web.requestFocus();
+    }
+
+    @Override
+    protected void onStart() {
+        super.onStart();
+        if (web != null) {
+            web.resumeTimers();
+            web.onResume();
+        }
+    }
+
+    @Override
+    protected void onStop() {
+        // Lecteur ouvert : l'interface cachée s'arrête complètement (scripts, animations, rendu)
+        // pour laisser tout le processeur de la TV à la vidéo.
+        if (web != null) {
+            web.onPause();
+            web.pauseTimers();
+        }
+        super.onStop();
     }
 
     @Override
@@ -141,9 +166,23 @@ public class MainActivity extends Activity {
      * Relais vers le serveur IPTV : la réponse est transmise en flux à la WebView, sans être copiée en mémoire.
      * Pour les grandes listes (films, séries, chaînes), seuls les champs utiles sont gardés (voir JsonCompactor).
      */
-    private WebResourceResponse proxy(String target, boolean compact) {
+    private WebResourceResponse proxy(String target, boolean compact, boolean cachedOnly) {
         if (target == null || !(target.startsWith("http://") || target.startsWith("https://"))) {
             return error(400, "Adresse invalide.");
+        }
+        // Copie locale de la dernière liste reçue : le catalogue s'affiche sans attendre le serveur,
+        // puis l'interface le met à jour en arrière-plan.
+        File copy = compact ? catalogFile(target) : null;
+        if (cachedOnly) {
+            if (copy != null && copy.isFile() && copy.length() > 2) {
+                try {
+                    return new WebResourceResponse("application/json", "utf-8", 200, "OK", headers(),
+                            new BufferedInputStream(new FileInputStream(copy), 64 * 1024));
+                } catch (IOException ignored) {
+                    // Copie illisible : on répond comme s'il n'y en avait pas.
+                }
+            }
+            return error(404, "Pas de copie locale.");
         }
         try {
             HttpURLConnection c = open(target, UserAgents.index(this));
@@ -167,7 +206,7 @@ public class MainActivity extends Activity {
             }
             InputStream in = status >= 400 ? c.getErrorStream() : c.getInputStream();
             if (in == null) in = new ByteArrayInputStream(new byte[0]);
-            if (compact && status < 300) in = JsonCompactor.compact(in);
+            if (compact && status < 300) in = JsonCompactor.compact(in, copy);
             return new WebResourceResponse("application/json", "utf-8", status, status < 300 ? "OK" : "Error", headers(), in);
         } catch (SocketTimeoutException e) {
             return error(504, "Délai de connexion dépassé. Le serveur ne répond pas.");
@@ -180,6 +219,23 @@ public class MainActivity extends Activity {
         } catch (IOException | RuntimeException e) {
             return error(502, "Impossible de joindre le serveur. Vérifiez l'URL ou votre connexion.");
         }
+    }
+
+    /** Fichier de la copie locale d'une liste (nom = empreinte de l'adresse, identifiants compris). */
+    private File catalogFile(String target) {
+        try {
+            byte[] d = MessageDigest.getInstance("SHA-1").digest(target.getBytes(StandardCharsets.UTF_8));
+            StringBuilder name = new StringBuilder();
+            for (byte b : d) name.append(String.format("%02x", b & 0xff));
+            return new File(new File(getCacheDir(), "catalog"), name + ".json");
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    private void clearCatalogCache() {
+        File[] files = new File(getCacheDir(), "catalog").listFiles();
+        if (files != null) for (File f : files) f.delete();
     }
 
     private WebResourceResponse asset(String path) {
@@ -304,12 +360,22 @@ public class MainActivity extends Activity {
                 intent.putExtra(PlayerActivity.EXTRA_SUB_LANG, o.optString("subLang", "off"));
                 intent.putExtra(PlayerActivity.EXTRA_RESIZE, o.optString("resize", "fit"));
                 intent.putExtra(PlayerActivity.EXTRA_DUB, o.optBoolean("dub", false));
+                intent.putExtra(PlayerActivity.EXTRA_FIRST_NUMBER, o.optInt("firstNumber", 1));
                 JSONArray alts = o.optJSONArray("alts");
                 if (alts != null) intent.putExtra(PlayerActivity.EXTRA_ALTS, alts.toString());
-                runOnUiThread(() -> startActivity(intent));
+                runOnUiThread(() -> {
+                    startActivity(intent);
+                    overridePendingTransition(0, 0);  // pas d'animation d'ouverture : le lecteur apparaît tout de suite
+                });
             } catch (JSONException ignored) {
                 // Charge utile invalide : rien à lire.
             }
+        }
+
+        /** Efface les copies locales du catalogue (déconnexion). */
+        @JavascriptInterface
+        public void clearCatalogCache() {
+            MainActivity.this.clearCatalogCache();
         }
 
         /** Téléchargements (voir Downloads) : lancement, suivi, suppression. */
